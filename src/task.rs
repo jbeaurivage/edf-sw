@@ -15,6 +15,15 @@ impl Task {
             callback,
         }
     }
+
+    pub fn rel_deadline(&self) -> Deadline {
+        self.rel_deadline
+    }
+
+    pub fn set_deadline(&mut self, deadline: Deadline) {
+        self.rel_deadline = deadline;
+    }
+
     pub(crate) fn into_queued(self, now: Timestamp) -> ScheduledTask {
         ScheduledTask {
             deadline: now + self.rel_deadline,
@@ -30,7 +39,7 @@ pub(crate) struct ScheduledTask {
 }
 
 impl ScheduledTask {
-    pub fn deadline(&self) -> Timestamp {
+    pub fn abs_deadline(&self) -> Timestamp {
         self.deadline
     }
 }

@@ -1,10 +1,14 @@
-use core::cell::RefCell;
+use core::{
+    cell::RefCell,
+    marker::PhantomData,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
-use atsamd_hal::pac::NVIC;
+use atsamd_hal::pac::{NVIC, SCB};
 use cortex_m::interrupt::{self, Mutex};
 use heapless::{
     Vec,
-    sorted_linked_list::{Max, SortedLinkedList},
+    sorted_linked_list::{Min, SortedLinkedList},
 };
 use rtic_monotonics::Monotonic;
 
@@ -22,24 +26,38 @@ pub(crate) static TASK_STACK: Mutex<RefCell<Vec<RunningTask, 16, u8>>> =
 pub(crate) static MIN_DEADLINE: Mutex<RefCell<Timestamp>> =
     Mutex::new(RefCell::new(Timestamp::from_ticks(u64::MAX)));
 
-pub struct Scheduler {
-    task_queue: Mutex<RefCell<SortedLinkedList<ScheduledTask, Max, 16, usize>>>,
+pub struct Scheduler<M>
+where
+    M: Monotonic<Instant = Timestamp>,
+{
+    ready: AtomicBool,
+    task_queue: Mutex<RefCell<SortedLinkedList<ScheduledTask, Min, 16, usize>>>,
+    mono: PhantomData<M>,
 }
 
-impl core::default::Default for Scheduler {
+impl<M: Monotonic<Instant = Timestamp>> core::default::Default for Scheduler<M> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Scheduler {
+impl<M> Scheduler<M>
+where
+    M: Monotonic<Instant = Timestamp>,
+{
     pub const fn new() -> Self {
         Self {
+            ready: AtomicBool::new(false),
             task_queue: Mutex::new(RefCell::new(SortedLinkedList::new_usize())),
+            mono: PhantomData,
         }
     }
 
-    pub fn init(&self, nvic: &mut NVIC) {
+    pub fn init(&self, nvic: &mut NVIC, scb: &mut SCB) {
+        // Before we can start messing with the vector table, we must first copy it over
+        // to RAM
+        crate::vector_table::copy_vector_table(scb);
+
         for (level, interrupt) in DISPATCHERS.iter().enumerate() {
             unsafe {
                 NVIC::unpend(*interrupt);
@@ -48,47 +66,68 @@ impl Scheduler {
                 interrupt::enable();
             }
         }
+
+        self.ready.swap(true, Ordering::SeqCst);
     }
 
-    pub fn schedule<M>(&self, task: Task)
-    where
-        M: Monotonic<Instant = Timestamp>,
-    {
-        let cs = RestoreCs::new();
-        let task = task.into_queued(M::now());
+    pub fn schedule(&self, task: Task) {
+        if !self.ready.load(Ordering::SeqCst) {
+            panic!("Scheduler not initialized");
+        }
 
-        if task.deadline() < *MIN_DEADLINE.borrow(&cs).borrow_mut() {
-            defmt::debug!("execute");
-            self.execute(cs, task);
+        let cs = RestoreCs::new();
+        let now = M::now();
+        let rel_dl = task.rel_deadline();
+        let task = task.into_queued(now);
+        let min_dl = *MIN_DEADLINE.borrow(&cs).borrow_mut();
+
+        defmt::trace!(
+            "[SCHEDULE] now: {}, rel dl: {}, abs dl: {}, min dl: {}",
+            now,
+            rel_dl,
+            task.abs_deadline(),
+            min_dl
+        );
+
+        if task.abs_deadline() < min_dl || self.task_queue.borrow(&cs).borrow().is_empty() {
+            defmt::trace!("preempt");
+            self.execute(cs, task, now);
         } else {
             {
-                defmt::debug!("enqueue");
+                defmt::trace!("enqueue");
                 let mut queue = self.task_queue.borrow(&cs).borrow_mut();
                 queue.push(task).unwrap();
             }
         }
     }
 
-    fn execute(&self, cs: RestoreCs, task: ScheduledTask) {
-        {
-            let mut min_dl = MIN_DEADLINE.borrow(&cs).borrow_mut();
-            let prev_dl = *min_dl;
-            *min_dl = task.deadline();
-
-            let mut stack = TASK_STACK.borrow(&cs).borrow_mut();
-
-            stack
-                .push(RunningTask::from_scheduled(task, prev_dl))
-                .unwrap();
-            let max_prio = stack.len() as u8;
-
-            let irq = dispatcher_irq(max_prio);
-            unsafe { set_handler(irq, trampoline) };
-            NVIC::pend(dispatcher(max_prio));
+    fn execute(&self, cs: RestoreCs, task: ScheduledTask, now: Timestamp) {
+        if !self.ready.load(Ordering::SeqCst) {
+            panic!("Scheduler not initialized");
         }
 
-        // Can also just drop crit section
-        cs.restore();
+        let mut min_dl = MIN_DEADLINE.borrow(&cs).borrow_mut();
+        let prev_dl = *min_dl;
+        *min_dl = task.abs_deadline();
+
+        let mut stack = TASK_STACK.borrow(&cs).borrow_mut();
+
+        stack
+            .push(RunningTask::from_scheduled(task, prev_dl))
+            .unwrap();
+        let max_prio = stack.len() as u8;
+
+        defmt::trace!(
+            "[EXEC] now: {}, prio: {}, new dl: {}, prev dl: {}\n",
+            now,
+            max_prio,
+            &*min_dl,
+            prev_dl
+        );
+
+        let irq = dispatcher_irq(max_prio);
+        unsafe { set_handler(irq, trampoline) };
+        NVIC::pend(dispatcher(max_prio));
     }
 
     pub fn idle(&self) -> ! {
@@ -100,8 +139,9 @@ impl Scheduler {
             };
 
             if let Some(t) = task {
+                defmt::trace!("dequeue");
                 let cs = RestoreCs::new();
-                self.execute(cs, t);
+                self.execute(cs, t, M::now());
             }
         }
     }
@@ -126,4 +166,6 @@ extern "C" fn trampoline() {
     TASK_STACK.borrow(&cs).borrow_mut().pop().unwrap();
     // Restore previous deadline
     *MIN_DEADLINE.borrow(&cs).borrow_mut() = prev_deadline;
+
+    defmt::trace!("[COMPLETE TASK] new dl: {}", prev_deadline);
 }

@@ -6,21 +6,21 @@ const VTABLE_LEN: usize = 64;
 #[allow(clippy::zero_ptr)]
 const VTABLE_START: *const usize = 0x0 as *const _;
 
-static VECTOR_TABLE: VTable = VTable(UnsafeCell::new([0; VTABLE_LEN]));
+pub(super) static VECTOR_TABLE: VTable = VTable(UnsafeCell::new([0; VTABLE_LEN]));
 
 #[repr(align(512))]
-struct VTable(UnsafeCell<[usize; VTABLE_LEN]>);
+pub(super) struct VTable(UnsafeCell<[usize; VTABLE_LEN]>);
 
 impl VTable {
-    fn addr(&self) -> *const [usize; VTABLE_LEN] {
+    pub(crate) fn addr(&self) -> *const [usize; VTABLE_LEN] {
         self.0.get()
     }
 
-    unsafe fn get(&self) -> &[usize] {
+    pub(crate) unsafe fn get(&self) -> &[usize] {
         unsafe { &*self.addr() }
     }
 
-    unsafe fn get_mut(&self) -> *mut [usize] {
+    pub(crate) unsafe fn get_mut(&self) -> *mut [usize] {
         unsafe { &mut *self.0.get() }
     }
 }
@@ -44,15 +44,4 @@ pub fn copy_vector_table(scb: &mut SCB) {
 /// Set the IRQ's ISR vector to the provided function pointer
 pub(crate) unsafe fn set_handler(irq: usize, addr: extern "C" fn()) {
     unsafe { (*VECTOR_TABLE.get_mut())[irq] = addr as _ }
-}
-
-/// Print the vector table
-pub fn print_dbg() {
-    for (addr, item) in unsafe { VECTOR_TABLE.get() }.iter().enumerate() {
-        defmt::trace!(
-            "ADDR: {:#x}, item: {:#x}",
-            VECTOR_TABLE.addr() as usize + addr * 4,
-            item
-        );
-    }
 }
