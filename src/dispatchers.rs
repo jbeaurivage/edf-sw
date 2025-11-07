@@ -1,23 +1,31 @@
 use atsamd_hal::pac::{Interrupt, interrupt};
 
-/// Level 1 dispatcher
-#[interrupt]
-fn SERCOM0_0() {
-    const IRQ: u32 = Interrupt::SERCOM0_0 as u32 + 16;
+pub(crate) const DISPATCHERS: [Interrupt; 3] = [
+    Interrupt::SERCOM0_0,
+    Interrupt::SERCOM0_1,
+    Interrupt::SERCOM0_2,
+];
+
+const fn interrupt_to_irq(interrupt: Interrupt) -> usize {
+    interrupt as usize + 16
 }
 
-/// Level 2 dispatcher
-#[interrupt]
-fn SERCOM0_1() {
-    const IRQ: u32 = Interrupt::SERCOM0_1 as u32 + 16;
+pub const fn dispatcher_irq(level: u8) -> usize {
+    interrupt_to_irq(DISPATCHERS[level as usize])
 }
 
-/// Level 3 dispatcher
-#[interrupt]
-fn SERCOM0_2() {
-    const IRQ: u32 = Interrupt::SERCOM0_2 as u32 + 16;
+pub const fn dispatcher(level: u8) -> Interrupt {
+    DISPATCHERS[level as usize]
 }
 
-/// A task ISR which signals a pending task
+/// Level 1 dispatcher placeholder
 #[interrupt]
-fn SERCOM1_0() {}
+fn SERCOM0_0() {}
+
+/// Level 2 dispatcher placeholder
+#[interrupt]
+fn SERCOM0_1() {}
+
+/// Level 3 dispatcher placeholder
+#[interrupt]
+fn SERCOM0_2() {}

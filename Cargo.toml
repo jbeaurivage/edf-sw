@@ -8,6 +8,7 @@ cortex-m = { version = "0.7.7", features = ["critical-section-single-core", "inl
 cortex-m-rt = "0.7.5"
 defmt = "1.0.1"
 defmt-rtt = "1.1.0"
+heapless = { version = "0.9.1", features = ["defmt", "portable-atomic"] }
 panic-probe = { version = "1.0.0", features = ["defmt", "print-defmt"] }
 rtic = { version = "2.2.0", features = ["thumbv7-backend"] }
 rtic-monotonics = { version = "2.1.0", features = ["cortex-m-systick"] }
@@ -29,3 +30,12 @@ default = [
 
 [build-dependencies]
 cc = "1.2.44"
+
+[profile.dev]
+opt-level = 0
+debug = 2
+
+[profile.release]
+opt-level = "s"
+debug = 2
+lto = "thin"

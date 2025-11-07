@@ -1,7 +1,10 @@
 use core::cell::UnsafeCell;
 use cortex_m::peripheral::SCB;
 
+// TODO not sure about the real length
 const VTABLE_LEN: usize = 64;
+#[allow(clippy::zero_ptr)]
+const VTABLE_START: *const usize = 0x0 as *const _;
 
 static VECTOR_TABLE: VTable = VTable(UnsafeCell::new([0; VTABLE_LEN]));
 
@@ -22,26 +25,28 @@ impl VTable {
     }
 }
 
+// TODO that's probably not safe?
 unsafe impl Sync for VTable {}
 
-pub fn copy(scb: &mut SCB) {
-    unsafe extern "C" {
-        fn copy_vector_table(dest: *mut [usize; VTABLE_LEN], source: *const usize, len: usize);
-    }
+// Unfortunately we must drop down to assembly because the vector table contains
+// address 0x0
+unsafe extern "C" {
+    fn copy_array(dest: *mut [usize; VTABLE_LEN], source: *const usize, len: usize);
+}
 
+pub fn copy_vector_table(scb: &mut SCB) {
     unsafe {
-        copy_vector_table(VECTOR_TABLE.addr() as *mut _, core::ptr::null(), VTABLE_LEN);
-    }
-
-    unsafe {
+        copy_array(VECTOR_TABLE.addr() as *mut _, VTABLE_START, VTABLE_LEN);
         scb.vtor.write(VECTOR_TABLE.addr() as _);
     }
 }
 
-pub unsafe fn switch_handler(irq: usize, addr: fn()) {
+/// Set the IRQ's ISR vector to the provided function pointer
+pub(crate) unsafe fn set_handler(irq: usize, addr: extern "C" fn()) {
     unsafe { (*VECTOR_TABLE.get_mut())[irq] = addr as _ }
 }
 
+/// Print the vector table
 pub fn print_dbg() {
     for (addr, item) in unsafe { VECTOR_TABLE.get() }.iter().enumerate() {
         defmt::trace!(
