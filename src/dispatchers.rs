@@ -1,6 +1,8 @@
 use atsamd_hal::pac::{Interrupt, interrupt};
 
-pub(crate) const DISPATCHERS: [Interrupt; 3] = [
+pub const NUM_DISPATCHERS: usize = 3;
+
+pub(crate) const DISPATCHERS: [Interrupt; NUM_DISPATCHERS] = [
     Interrupt::SERCOM0_0,
     Interrupt::SERCOM0_1,
     Interrupt::SERCOM0_2,

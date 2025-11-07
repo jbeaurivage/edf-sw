@@ -1,8 +1,10 @@
 use core::cell::UnsafeCell;
 use cortex_m::peripheral::SCB;
 
-// TODO not sure about the real length
-const VTABLE_LEN: usize = 64;
+// TODO This is platform dependent
+const VTABLE_LEN: usize = 152;
+// TODO is the vtable always at 0x0 on reset?
+// TODO should probably read VTOR instead
 #[allow(clippy::zero_ptr)]
 const VTABLE_START: *const usize = 0x0 as *const _;
 
@@ -28,8 +30,8 @@ impl VTable {
 // TODO that's probably not safe?
 unsafe impl Sync for VTable {}
 
-// Unfortunately we must drop down to assembly because the vector table contains
-// address 0x0
+// Unfortunately we must drop down to assembly because the vector table might
+// start at address 0x0
 unsafe extern "C" {
     fn copy_array(dest: *mut [usize; VTABLE_LEN], source: *const usize, len: usize);
 }

@@ -1,24 +1,18 @@
-use core::{
-    cell::RefCell,
-    marker::PhantomData,
-    sync::atomic::{AtomicBool, Ordering},
-};
+use core::cell::RefCell;
+use core::marker::PhantomData;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use atsamd_hal::pac::{NVIC, SCB};
 use cortex_m::interrupt::{self, Mutex};
-use heapless::{
-    Vec,
-    sorted_linked_list::{Min, SortedLinkedList},
-};
+use heapless::Vec;
+use heapless::sorted_linked_list::{Min, SortedLinkedList};
 use rtic_monotonics::Monotonic;
 
-use crate::{
-    Timestamp,
-    critical_section::RestoreCs,
-    dispatchers::{DISPATCHERS, dispatcher, dispatcher_irq},
-    task::{RunningTask, ScheduledTask, Task},
-    vector_table::set_handler,
-};
+use crate::Timestamp;
+use crate::critical_section::RestoreCs;
+use crate::dispatchers::{DISPATCHERS, dispatcher, dispatcher_irq};
+use crate::task::{RunningTask, ScheduledTask, Task};
+use crate::vector_table::set_handler;
 
 pub(crate) static TASK_STACK: Mutex<RefCell<Vec<RunningTask, 16, u8>>> =
     Mutex::new(RefCell::new(Vec::new()));
@@ -54,6 +48,8 @@ where
     }
 
     pub fn init(&self, nvic: &mut NVIC, scb: &mut SCB) {
+        interrupt::disable();
+
         // Before we can start messing with the vector table, we must first copy it over
         // to RAM
         crate::vector_table::copy_vector_table(scb);
@@ -62,8 +58,9 @@ where
             unsafe {
                 NVIC::unpend(*interrupt);
                 NVIC::unmask(*interrupt);
-                nvic.set_priority(*interrupt, 16 - (level as u8 + 1));
-                interrupt::enable();
+                // TODO remove this magic number somehow
+                nvic.set_priority(*interrupt, 16 - (level as u8 * 2 + 1));
+                // interrupt::enable();
             }
         }
 
@@ -89,12 +86,14 @@ where
             min_dl
         );
 
-        if task.abs_deadline() < min_dl || self.task_queue.borrow(&cs).borrow().is_empty() {
-            defmt::trace!("preempt");
+        // if task.abs_deadline() < min_dl || TASK_STACK.borrow(&cs).borrow().is_empty()
+        // {
+        if task.abs_deadline() < min_dl {
+            defmt::trace!("[PREEMPT]");
             self.execute(cs, task, now);
         } else {
             {
-                defmt::trace!("enqueue");
+                defmt::trace!("[ENQUEUE]");
                 let mut queue = self.task_queue.borrow(&cs).borrow_mut();
                 queue.push(task).unwrap();
             }
@@ -118,7 +117,7 @@ where
         let max_prio = stack.len() as u8;
 
         defmt::trace!(
-            "[EXEC] now: {}, prio: {}, new dl: {}, prev dl: {}\n",
+            "[EXEC] now: {}, prio: {}, new dl: {}, prev dl: {}",
             now,
             max_prio,
             &*min_dl,
@@ -131,6 +130,10 @@ where
     }
 
     pub fn idle(&self) -> ! {
+        unsafe {
+            interrupt::enable();
+        }
+
         loop {
             let task = {
                 let cs = RestoreCs::new();
@@ -139,7 +142,7 @@ where
             };
 
             if let Some(t) = task {
-                defmt::trace!("dequeue");
+                defmt::trace!("[DEQUEUE]");
                 let cs = RestoreCs::new();
                 self.execute(cs, t, M::now());
             }
