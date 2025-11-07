@@ -14,9 +14,9 @@ fn main() {
     }
     println!("cargo:rerun-if-changed=build.rs");
 
-    println!("cargo:rerun-if-changed=copy_vtable.S");
+    println!("cargo:rerun-if-changed=src/copy_array.S");
 
     cc::Build::new()
-        .file("copy_vtable.S") // Path to the assembly file
-        .compile("copy_vtable");
+        .file("src/copy_array.S") // Path to the assembly file
+        .compile("copy_array");
 }
