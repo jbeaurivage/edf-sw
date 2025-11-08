@@ -5,7 +5,6 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use atsamd_hal::pac::{NVIC, SCB};
 use cortex_m::interrupt;
 use heapless::Vec;
-use heapless::sorted_linked_list::{Min, SortedLinkedList};
 use rtic_monotonics::Monotonic;
 
 use crate::Timestamp;
@@ -35,19 +34,32 @@ impl MinDeadline {
 }
 
 // TODO get rid of this magic number
-struct TaskQueue(UnsafeCell<SortedLinkedList<ScheduledTask, Min, 16, usize>>);
+struct TaskQueue(UnsafeCell<Vec<ScheduledTask, 16, u8>>);
 
 unsafe impl Sync for TaskQueue {}
 
 impl TaskQueue {
-    fn get_mut(&self, _cs: &CsGuard) -> *mut SortedLinkedList<ScheduledTask, Min, 16, usize> {
+    fn get_mut(&self, _cs: &CsGuard) -> *mut Vec<ScheduledTask, 16, u8> {
         self.0.get()
+    }
+
+    unsafe fn get_most_urgent_task(&self, cs: &CsGuard) -> Option<(usize, &ScheduledTask)> {
+        unsafe {
+            (&*self.get_mut(cs))
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, t)| t.abs_deadline())
+        }
+    }
+
+    unsafe fn remove(&self, cs: &CsGuard, index: usize) -> ScheduledTask {
+        unsafe { (&mut *self.get_mut(cs)).swap_remove(index) }
     }
 }
 
 static RUNNING_STACK: TaskStack = TaskStack(UnsafeCell::new(Vec::new()));
 static MIN_DEADLINE: MinDeadline = MinDeadline(UnsafeCell::new(Timestamp::from_ticks(u64::MAX)));
-static PARKED_QUEUE: TaskQueue = TaskQueue(UnsafeCell::new(SortedLinkedList::new_usize()));
+static PARKED_QUEUE: TaskQueue = TaskQueue(UnsafeCell::new(Vec::new()));
 
 pub struct Scheduler<M>
 where
@@ -169,12 +181,12 @@ where
 
         loop {
             let cs = CsGuard::new();
-            let queue = unsafe { &mut *PARKED_QUEUE.get_mut(&cs) };
-            let task = queue.pop();
-
-            if let Some(t) = task {
-                defmt::trace!("[DEQUEUE]");
-                Self::execute(cs, t, M::now());
+            unsafe {
+                if let Some((idx, _)) = PARKED_QUEUE.get_most_urgent_task(&cs) {
+                    let task = PARKED_QUEUE.remove(&cs, idx);
+                    defmt::trace!("[DEQUEUE]");
+                    Self::execute(cs, task, M::now());
+                }
             }
         }
     }
@@ -194,11 +206,10 @@ extern "C" fn run_task<M: Monotonic<Instant = Timestamp>>() {
 
     // And cleanup after ourselves
     let cs = CsGuard::new();
-    let (stack, min_deadline, queue) = unsafe {
+    let (stack, min_deadline) = unsafe {
         (
             &mut *RUNNING_STACK.get_mut(&cs),
             &mut *MIN_DEADLINE.get_mut(&cs),
-            &mut *PARKED_QUEUE.get_mut(&cs),
         )
     };
 
@@ -207,20 +218,21 @@ extern "C" fn run_task<M: Monotonic<Instant = Timestamp>>() {
     *min_deadline = prev_deadline;
 
     defmt::trace!(
-        "[COMPLETE TASK] new dl: {}, stack depth: {}, queue length: {}",
+        "[COMPLETE TASK] new dl: {}, stack depth: {}",
         prev_deadline,
         stack.len(),
-        queue.iter().count(),
     );
 
     // It's possible that a task showed up in the queue as the previous task was
     // running. So we need to check if it would preempt the next task in line to
     // run, which would start as soon as the critical section exits.
-    if let Some(q_t) = queue.peek()
-        && q_t.abs_deadline() < *min_deadline
-    {
-        let task = queue.pop().unwrap();
-        defmt::trace!("[RESCHEDULE TASK]");
-        Scheduler::<M>::execute(cs, task, M::now());
+    unsafe {
+        if let Some((idx, task)) = PARKED_QUEUE.get_most_urgent_task(&cs)
+            && task.abs_deadline() < *min_deadline
+        {
+            let task = PARKED_QUEUE.remove(&cs, idx);
+            defmt::trace!("[RESCHEDULE TASK]");
+            Scheduler::<M>::execute(cs, task, M::now());
+        }
     }
 }
