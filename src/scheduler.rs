@@ -3,7 +3,7 @@ use core::marker::PhantomData;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use atsamd_hal::pac::{NVIC, SCB};
-use cortex_m::interrupt::{self, CriticalSection};
+use cortex_m::interrupt;
 use heapless::Vec;
 use heapless::sorted_linked_list::{Min, SortedLinkedList};
 use rtic_monotonics::Monotonic;
@@ -15,29 +15,32 @@ use crate::task::{RunningTask, ScheduledTask, Task};
 use crate::vector_table::set_handler;
 
 struct TaskStack(UnsafeCell<Vec<RunningTask, NUM_DISPATCHERS, u8>>);
+
+unsafe impl Sync for TaskStack {}
+
 impl TaskStack {
-    fn get_mut(&self, _cs: &CriticalSection) -> *mut Vec<RunningTask, NUM_DISPATCHERS, u8> {
+    fn get_mut(&self, _cs: &CsGuard) -> *mut Vec<RunningTask, NUM_DISPATCHERS, u8> {
         self.0.get()
     }
 }
-unsafe impl Sync for TaskStack {}
 
 struct MinDeadline(UnsafeCell<Timestamp>);
+
 unsafe impl Sync for MinDeadline {}
+
 impl MinDeadline {
-    fn get_mut(&self, _cs: &CriticalSection) -> *mut Timestamp {
+    fn get_mut(&self, _cs: &CsGuard) -> *mut Timestamp {
         self.0.get()
     }
 }
 
 // TODO get rid of this magic number
 struct TaskQueue(UnsafeCell<SortedLinkedList<ScheduledTask, Min, 16, usize>>);
+
 unsafe impl Sync for TaskQueue {}
+
 impl TaskQueue {
-    fn get_mut(
-        &self,
-        _cs: &CriticalSection,
-    ) -> *mut SortedLinkedList<ScheduledTask, Min, 16, usize> {
+    fn get_mut(&self, _cs: &CsGuard) -> *mut SortedLinkedList<ScheduledTask, Min, 16, usize> {
         self.0.get()
     }
 }
@@ -181,7 +184,7 @@ where
 /// scheduler state after its execution completes.
 extern "C" fn run_task<M: Monotonic<Instant = Timestamp>>() {
     let (callback, prev_deadline) = unsafe {
-        let cs = CriticalSection::new();
+        let cs = CsGuard::new();
         let task = (&*RUNNING_STACK.get_mut(&cs)).last().unwrap();
         (task.callback(), task.prev_deadline())
     };
