@@ -1,5 +1,3 @@
-use core::cmp::Ordering;
-
 use crate::{Deadline, Timestamp};
 
 #[derive(Debug)]
@@ -32,8 +30,7 @@ impl Task {
     }
 }
 
-#[derive(PartialEq, Eq, Debug)]
-#[allow(unpredictable_function_pointer_comparisons)]
+#[derive(Debug)]
 pub(crate) struct ScheduledTask {
     deadline: Timestamp,
     callback: fn(),
@@ -42,18 +39,6 @@ pub(crate) struct ScheduledTask {
 impl ScheduledTask {
     pub fn abs_deadline(&self) -> Timestamp {
         self.deadline
-    }
-}
-
-impl PartialOrd for ScheduledTask {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.cmp(other).into()
-    }
-}
-
-impl Ord for ScheduledTask {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.deadline.cmp(&other.deadline)
     }
 }
 
