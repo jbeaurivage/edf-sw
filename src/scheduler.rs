@@ -1,33 +1,60 @@
-use core::cell::RefCell;
+use core::cell::UnsafeCell;
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use atsamd_hal::pac::{NVIC, SCB};
-use cortex_m::interrupt::{self, Mutex};
+use cortex_m::interrupt::{self, CriticalSection};
 use heapless::Vec;
 use heapless::sorted_linked_list::{Min, SortedLinkedList};
 use rtic_monotonics::Monotonic;
 
 use crate::Timestamp;
-use crate::critical_section::RestoreCs;
-use crate::dispatchers::{DISPATCHERS, dispatcher, dispatcher_irq};
+use crate::critical_section::CsGuard;
+use crate::dispatchers::{DISPATCHERS, NUM_DISPATCHERS, dispatcher, dispatcher_irq};
 use crate::task::{RunningTask, ScheduledTask, Task};
 use crate::vector_table::set_handler;
 
-pub(crate) static TASK_STACK: Mutex<RefCell<Vec<RunningTask, 16, u8>>> =
-    Mutex::new(RefCell::new(Vec::new()));
+struct TaskStack(UnsafeCell<Vec<RunningTask, NUM_DISPATCHERS, u8>>);
+impl TaskStack {
+    fn get_mut(&self, _cs: &CriticalSection) -> *mut Vec<RunningTask, NUM_DISPATCHERS, u8> {
+        self.0.get()
+    }
+}
+unsafe impl Sync for TaskStack {}
 
-pub(crate) static MIN_DEADLINE: Mutex<RefCell<Timestamp>> =
-    Mutex::new(RefCell::new(Timestamp::from_ticks(u64::MAX)));
+struct MinDeadline(UnsafeCell<Timestamp>);
+unsafe impl Sync for MinDeadline {}
+impl MinDeadline {
+    fn get_mut(&self, _cs: &CriticalSection) -> *mut Timestamp {
+        self.0.get()
+    }
+}
+
+// TODO get rid of this magic number
+struct TaskQueue(UnsafeCell<SortedLinkedList<ScheduledTask, Min, 16, usize>>);
+unsafe impl Sync for TaskQueue {}
+impl TaskQueue {
+    fn get_mut(
+        &self,
+        _cs: &CriticalSection,
+    ) -> *mut SortedLinkedList<ScheduledTask, Min, 16, usize> {
+        self.0.get()
+    }
+}
+
+static RUNNING_STACK: TaskStack = TaskStack(UnsafeCell::new(Vec::new()));
+static MIN_DEADLINE: MinDeadline = MinDeadline(UnsafeCell::new(Timestamp::from_ticks(u64::MAX)));
+static PARKED_QUEUE: TaskQueue = TaskQueue(UnsafeCell::new(SortedLinkedList::new_usize()));
 
 pub struct Scheduler<M>
 where
     M: Monotonic<Instant = Timestamp>,
 {
     ready: AtomicBool,
-    task_queue: Mutex<RefCell<SortedLinkedList<ScheduledTask, Min, 16, usize>>>,
     mono: PhantomData<M>,
 }
+
+unsafe impl<M: Monotonic<Instant = Timestamp>> Sync for Scheduler<M> {}
 
 impl<M: Monotonic<Instant = Timestamp>> core::default::Default for Scheduler<M> {
     fn default() -> Self {
@@ -42,8 +69,13 @@ where
     pub const fn new() -> Self {
         Self {
             ready: AtomicBool::new(false),
-            task_queue: Mutex::new(RefCell::new(SortedLinkedList::new_usize())),
             mono: PhantomData,
+        }
+    }
+
+    pub fn check_init(&self) {
+        if !self.ready.load(Ordering::SeqCst) {
+            panic!("Scheduler not initialized");
         }
     }
 
@@ -55,28 +87,30 @@ where
         crate::vector_table::copy_vector_table(scb);
 
         for (level, interrupt) in DISPATCHERS.iter().enumerate() {
+            // TODO remove this "8" magic number somehow, which is the number of priorities
+            // available on the ATSAMD51J
+            let nvic_prio = (8 - (level as u8 + 1)) << 4;
+
             unsafe {
                 NVIC::unpend(*interrupt);
                 NVIC::unmask(*interrupt);
-                // TODO remove this magic number somehow
-                nvic.set_priority(*interrupt, 16 - (level as u8 * 2 + 1));
-                // interrupt::enable();
+                nvic.set_priority(*interrupt, nvic_prio);
             }
         }
 
         self.ready.swap(true, Ordering::SeqCst);
+        // interrupt::enable();
     }
 
     pub fn schedule(&self, task: Task) {
-        if !self.ready.load(Ordering::SeqCst) {
-            panic!("Scheduler not initialized");
-        }
+        self.check_init();
 
-        let cs = RestoreCs::new();
+        let cs = CsGuard::new();
         let now = M::now();
         let rel_dl = task.rel_deadline();
         let task = task.into_queued(now);
-        let min_dl = *MIN_DEADLINE.borrow(&cs).borrow_mut();
+        let (stack, min_dl) =
+            unsafe { (&mut *RUNNING_STACK.get_mut(&cs), *MIN_DEADLINE.get_mut(&cs)) };
 
         defmt::trace!(
             "[SCHEDULE] now: {}, rel dl: {}, abs dl: {}, min dl: {}",
@@ -86,30 +120,24 @@ where
             min_dl
         );
 
-        // if task.abs_deadline() < min_dl || TASK_STACK.borrow(&cs).borrow().is_empty()
-        // {
-        if task.abs_deadline() < min_dl {
+        if task.abs_deadline() < min_dl || stack.is_empty() {
             defmt::trace!("[PREEMPT]");
-            self.execute(cs, task, now);
+            Self::execute(cs, task, now);
         } else {
             {
                 defmt::trace!("[ENQUEUE]");
-                let mut queue = self.task_queue.borrow(&cs).borrow_mut();
+                let queue = unsafe { &mut *PARKED_QUEUE.get_mut(&cs) };
                 queue.push(task).unwrap();
             }
         }
     }
 
-    fn execute(&self, cs: RestoreCs, task: ScheduledTask, now: Timestamp) {
-        if !self.ready.load(Ordering::SeqCst) {
-            panic!("Scheduler not initialized");
-        }
-
-        let mut min_dl = MIN_DEADLINE.borrow(&cs).borrow_mut();
+    fn execute(cs: CsGuard, task: ScheduledTask, now: Timestamp) {
+        let min_dl = unsafe { &mut *MIN_DEADLINE.get_mut(&cs) };
         let prev_dl = *min_dl;
         *min_dl = task.abs_deadline();
 
-        let mut stack = TASK_STACK.borrow(&cs).borrow_mut();
+        let stack = unsafe { &mut *RUNNING_STACK.get_mut(&cs) };
 
         stack
             .push(RunningTask::from_scheduled(task, prev_dl))
@@ -117,47 +145,44 @@ where
         let max_prio = stack.len() as u8;
 
         defmt::trace!(
-            "[EXEC] now: {}, prio: {}, new dl: {}, prev dl: {}",
-            now,
+            "[EXEC] prio: {}, now: {}, new dl: {}, prev dl: {}",
             max_prio,
+            now,
             &*min_dl,
             prev_dl
         );
 
         let irq = dispatcher_irq(max_prio);
-        unsafe { set_handler(irq, trampoline) };
+        unsafe { set_handler(irq, run_task::<M>) };
         NVIC::pend(dispatcher(max_prio));
     }
 
     pub fn idle(&self) -> ! {
+        self.check_init();
+
         unsafe {
             interrupt::enable();
         }
 
         loop {
-            let task = {
-                let cs = RestoreCs::new();
-                let mut queue = self.task_queue.borrow(&cs).borrow_mut();
-                queue.pop()
-            };
+            let cs = CsGuard::new();
+            let queue = unsafe { &mut *PARKED_QUEUE.get_mut(&cs) };
+            let task = queue.pop();
 
             if let Some(t) = task {
                 defmt::trace!("[DEQUEUE]");
-                let cs = RestoreCs::new();
-                self.execute(cs, t, M::now());
+                Self::execute(cs, t, M::now());
             }
         }
     }
 }
 
-#[unsafe(no_mangle)]
-extern "C" fn trampoline() {
-    // TODO: I feel like somehow this should execute without giving the interrupts a
-    // chance to run after it has been pended..
-    let (callback, prev_deadline) = {
-        let cs = RestoreCs::new();
-        let stack = TASK_STACK.borrow(&cs).borrow_mut();
-        let task = stack.last().unwrap();
+/// Trampoline that takes care of launching the task, and restoring the
+/// scheduler state after its execution completes.
+extern "C" fn run_task<M: Monotonic<Instant = Timestamp>>() {
+    let (callback, prev_deadline) = unsafe {
+        let cs = CriticalSection::new();
+        let task = (&*RUNNING_STACK.get_mut(&cs)).last().unwrap();
         (task.callback(), task.prev_deadline())
     };
 
@@ -165,10 +190,34 @@ extern "C" fn trampoline() {
     callback();
 
     // And cleanup after ourselves
-    let cs = RestoreCs::new();
-    TASK_STACK.borrow(&cs).borrow_mut().pop().unwrap();
-    // Restore previous deadline
-    *MIN_DEADLINE.borrow(&cs).borrow_mut() = prev_deadline;
+    let cs = CsGuard::new();
+    let (stack, min_deadline, queue) = unsafe {
+        (
+            &mut *RUNNING_STACK.get_mut(&cs),
+            &mut *MIN_DEADLINE.get_mut(&cs),
+            &mut *PARKED_QUEUE.get_mut(&cs),
+        )
+    };
 
-    defmt::trace!("[COMPLETE TASK] new dl: {}", prev_deadline);
+    stack.pop().unwrap();
+    // Restore previous deadline
+    *min_deadline = prev_deadline;
+
+    defmt::trace!(
+        "[COMPLETE TASK] new dl: {}, stack depth: {}, queue length: {}",
+        prev_deadline,
+        stack.len(),
+        queue.iter().count(),
+    );
+
+    // It's possible that a task showed up in the queue as the previous task was
+    // running. So we need to check if it would preempt the next task in line to
+    // run, which would start as soon as the critical section exits.
+    if let Some(q_t) = queue.peek()
+        && q_t.abs_deadline() < *min_deadline
+    {
+        let task = queue.pop().unwrap();
+        defmt::trace!("[RESCHEDULE TASK]");
+        Scheduler::<M>::execute(cs, task, M::now());
+    }
 }

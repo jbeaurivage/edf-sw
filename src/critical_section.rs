@@ -1,18 +1,19 @@
 use core::ops::Deref;
 
 use cortex_m::interrupt;
-use cortex_m::register::primask::Primask;
+use cortex_m::register::primask::{self, Primask};
 
-pub(crate) struct RestoreCs {
+/// A critical section which restores its previous state on drop.
+pub(crate) struct CsGuard {
     cs: cortex_m::interrupt::CriticalSection,
     primask: Primask,
 }
 
-impl RestoreCs {
+impl CsGuard {
     pub fn new() -> Self {
-        let primask = cortex_m::register::primask::read();
+        let primask = primask::read();
         interrupt::disable();
-        // defmt::trace!("↑");
+        defmt::trace!("[CS] →");
         let cs = unsafe { interrupt::CriticalSection::new() };
 
         Self { cs, primask }
@@ -21,14 +22,14 @@ impl RestoreCs {
     pub unsafe fn restore_inner(&mut self) {
         if self.primask.is_active() {
             unsafe {
-                // defmt::trace!("↓");
+                defmt::trace!("[CS] ←");
                 interrupt::enable();
             }
         }
     }
 }
 
-impl Drop for RestoreCs {
+impl Drop for CsGuard {
     fn drop(&mut self) {
         unsafe {
             self.restore_inner();
@@ -36,7 +37,7 @@ impl Drop for RestoreCs {
     }
 }
 
-impl Deref for RestoreCs {
+impl Deref for CsGuard {
     type Target = interrupt::CriticalSection;
 
     fn deref(&self) -> &Self::Target {

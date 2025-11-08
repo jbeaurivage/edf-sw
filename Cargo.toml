@@ -39,4 +39,4 @@ debug = 2
 [profile.release]
 opt-level = "s"
 debug = 2
-lto = "thin"
+lto = "fat"

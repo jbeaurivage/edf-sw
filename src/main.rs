@@ -6,6 +6,7 @@ use atsamd_hal::pac::{Interrupt, NVIC, Peripherals, interrupt};
 use atsamd_hal::prelude::InterruptDrivenTimer;
 use atsamd_hal::timer::TimerCounter;
 use atsamd_hal::{self as hal};
+use cortex_m::asm;
 use cortex_m::peripheral::scb::SystemHandler;
 use fugit::ExtU32;
 use hal::rtc::rtic::rtc_clock;
@@ -37,35 +38,33 @@ fn main() -> ! {
     );
 
     unsafe {
-        core.SCB.set_priority(SystemHandler::SysTick, 4);
+        core.SCB.set_priority(SystemHandler::SysTick, 0);
         NVIC::unpend(Interrupt::TC4);
         NVIC::unmask(Interrupt::TC4);
-        core.NVIC.set_priority(Interrupt::TC4, 4);
+        core.NVIC.set_priority(Interrupt::TC4, 0);
     };
 
-    // configure a clock for the TC4 and TC5 peripherals
     let timer_clock = clocks.gclk0();
     let tc45 = &clocks.tc4_tc5(&timer_clock).unwrap();
 
-    // instantiate a timer object for the TC4 peripheral
-    let mut timer = TimerCounter::tc4_(tc45, peripherals.tc4, &mut peripherals.mclk);
-    timer.start(500.millis());
-    timer.enable_interrupt();
-
     SCHEDULER.init(&mut core.NVIC, &mut core.SCB);
 
-    core.SYST.set_reload(32_000_000 - 1);
+    // Instantiate a timer object for the TC4 timer/counter
+    let mut timer = TimerCounter::tc4_(tc45, peripherals.tc4, &mut peripherals.mclk);
+    timer.start(100.millis());
+    timer.enable_interrupt();
+
+    core.SYST.set_reload(8_000_000 - 1);
     core.SYST.clear_current();
     core.SYST.enable_interrupt();
     core.SYST.enable_counter();
 
-    // SCHEDULER.schedule(Task::new(Deadline::millis(500), manual_task));
+    SCHEDULER.schedule(Task::new(Deadline::millis(500), software_task));
 
-    defmt::debug!("REACHED IDLE");
+    defmt::debug!("[IDLE START]");
     SCHEDULER.idle();
 }
 
-// Just testing that the systick interrupt works after relocating the vtable
 #[cortex_m_rt::exception]
 fn SysTick() {
     SCHEDULER.schedule(Task::new(Deadline::millis(2), systick_task));
@@ -78,17 +77,19 @@ fn TC4() {
     SCHEDULER.schedule(Task::new(Deadline::millis(20), timer_task));
 }
 
-fn manual_task() {
-    // Roughly 2s delay with CPU running at 48 MHz
-    cortex_m::asm::delay(96_000_000);
-    defmt::info!("Here is a task that has been succesfully scheduled!");
-    SCHEDULER.schedule(Task::new(Deadline::millis(1000), manual_task));
+fn software_task() {
+    // Simulate blocking roughly for 2s with CPU running at 48 MHz
+    asm::delay(96_000_000);
+    defmt::info!("[TASK 0] Software task complete");
+    SCHEDULER.schedule(Task::new(Deadline::millis(1000), software_task));
 }
 
 fn systick_task() {
-    defmt::info!("tick");
+    asm::delay(4_000);
+    defmt::info!("[TASK 2] Systick task complete");
 }
 
 fn timer_task() {
-    defmt::info!("Timer task");
+    asm::delay(8_000);
+    defmt::info!("[TASK 1] Timer task complete");
 }

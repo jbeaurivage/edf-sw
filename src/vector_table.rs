@@ -38,6 +38,13 @@ unsafe extern "C" {
 
 pub fn copy_vector_table(scb: &mut SCB) {
     unsafe {
+        // TODO for some reason this doesn't work?
+        // It would be nice to forgo assembly stuff
+        // core::ptr::copy_nonoverlapping(
+        //     VTABLE_START.offset(1),
+        //     VECTOR_TABLE.addr().offset(1) as _,
+        //     VTABLE_LEN - 1,
+        // );
         copy_array(VECTOR_TABLE.addr() as *mut _, VTABLE_START, VTABLE_LEN);
         scb.vtor.write(VECTOR_TABLE.addr() as _);
     }

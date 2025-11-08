@@ -33,6 +33,7 @@ impl Task {
 }
 
 #[derive(PartialEq, Eq, Debug)]
+#[allow(unpredictable_function_pointer_comparisons)]
 pub(crate) struct ScheduledTask {
     deadline: Timestamp,
     callback: fn(),
