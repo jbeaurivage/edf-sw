@@ -59,7 +59,7 @@ fn main() -> ! {
     core.SYST.enable_interrupt();
     core.SYST.enable_counter();
 
-    SCHEDULER.schedule(Task::new(Deadline::millis(500), software_task));
+    SCHEDULER.schedule(Task::new(0, Deadline::millis(500), software_task));
 
     defmt::debug!("[IDLE START]");
     SCHEDULER.idle();
@@ -67,21 +67,21 @@ fn main() -> ! {
 
 #[cortex_m_rt::exception]
 fn SysTick() {
-    SCHEDULER.schedule(Task::new(Deadline::millis(2), systick_task));
+    SCHEDULER.schedule(Task::new(2, Deadline::millis(2), systick_task));
 }
 
 #[interrupt]
 fn TC4() {
     let tc4 = unsafe { Peripherals::steal().tc4 };
     tc4.count16().intflag().write(|w| w.ovf().set_bit());
-    SCHEDULER.schedule(Task::new(Deadline::millis(20), timer_task));
+    SCHEDULER.schedule(Task::new(1, Deadline::millis(20), timer_task));
 }
 
 fn software_task() {
     // Simulate blocking roughly for 2s with CPU running at 48 MHz
     asm::delay(96_000_000);
     defmt::info!("[TASK 0] Software task complete");
-    SCHEDULER.schedule(Task::new(Deadline::millis(1000), software_task));
+    SCHEDULER.schedule(Task::new(0, Deadline::millis(1000), software_task));
 }
 
 fn systick_task() {

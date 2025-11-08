@@ -4,16 +4,23 @@ use crate::{Deadline, Timestamp};
 
 #[derive(Debug)]
 pub struct Task {
+    // TODO For debugging purposes
+    id: u8,
     rel_deadline: Deadline,
     callback: fn(),
 }
 
 impl Task {
-    pub fn new(rel_deadline: Deadline, callback: fn()) -> Self {
+    pub fn new(id: u8, rel_deadline: Deadline, callback: fn()) -> Self {
         Self {
+            id,
             rel_deadline,
             callback,
         }
+    }
+
+    pub fn id(&self) -> u8 {
+        self.id
     }
 
     pub fn rel_deadline(&self) -> Deadline {
@@ -26,6 +33,7 @@ impl Task {
 
     pub(crate) fn into_queued(self, now: Timestamp) -> ScheduledTask {
         ScheduledTask {
+            id: self.id,
             deadline: now + self.rel_deadline,
             callback: self.callback,
         }
@@ -35,11 +43,16 @@ impl Task {
 #[derive(PartialEq, Eq, Debug)]
 #[allow(unpredictable_function_pointer_comparisons)]
 pub(crate) struct ScheduledTask {
+    id: u8,
     deadline: Timestamp,
     callback: fn(),
 }
 
 impl ScheduledTask {
+    pub fn id(&self) -> u8 {
+        self.id
+    }
+
     pub fn abs_deadline(&self) -> Timestamp {
         self.deadline
     }
@@ -59,6 +72,7 @@ impl Ord for ScheduledTask {
 
 #[derive(Debug)]
 pub(crate) struct RunningTask {
+    id: u8,
     prev_deadline: Timestamp,
     callback: fn(),
 }
@@ -66,9 +80,14 @@ pub(crate) struct RunningTask {
 impl RunningTask {
     pub fn from_scheduled(task: ScheduledTask, prev_deadline: Timestamp) -> Self {
         Self {
+            id: task.id,
             prev_deadline,
             callback: task.callback,
         }
+    }
+
+    pub fn id(&self) -> u8 {
+        self.id
     }
 
     pub fn prev_deadline(&self) -> Timestamp {

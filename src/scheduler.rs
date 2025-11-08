@@ -116,7 +116,8 @@ where
             unsafe { (&mut *RUNNING_STACK.get_mut(&cs), *MIN_DEADLINE.get_mut(&cs)) };
 
         defmt::trace!(
-            "[SCHEDULE] now: {}, rel dl: {}, abs dl: {}, min dl: {}",
+            "[SCHEDULE] ID: {}, now: {}, rel dl: {}, abs dl: {}, min dl: {}",
+            task.id(),
             now,
             rel_dl,
             task.abs_deadline(),
@@ -141,6 +142,7 @@ where
         *min_dl = task.abs_deadline();
 
         let stack = unsafe { &mut *RUNNING_STACK.get_mut(&cs) };
+        let id = task.id();
 
         stack
             .push(RunningTask::from_scheduled(task, prev_dl))
@@ -148,7 +150,8 @@ where
         let max_prio = stack.len() as u8;
 
         defmt::trace!(
-            "[EXEC] prio: {}, now: {}, new dl: {}, prev dl: {}",
+            "[EXEC] ID: {}, prio: {}, now: {}, new dl: {}, prev dl: {}",
+            id,
             max_prio,
             now,
             &*min_dl,
@@ -173,7 +176,7 @@ where
             let task = queue.pop();
 
             if let Some(t) = task {
-                defmt::trace!("[DEQUEUE]");
+                defmt::trace!("[DEQUEUE] ID: {}", t.id());
                 Self::execute(cs, t, M::now());
             }
         }
@@ -201,13 +204,13 @@ extern "C" fn run_task<M: Monotonic<Instant = Timestamp>>() {
             &mut *PARKED_QUEUE.get_mut(&cs),
         )
     };
-
-    stack.pop().unwrap();
+    let task = stack.pop().unwrap();
     // Restore previous deadline
     *min_deadline = prev_deadline;
 
     defmt::trace!(
-        "[COMPLETE TASK] new dl: {}, stack depth: {}, queue length: {}",
+        "[COMPLETE TASK] id: {}, new dl: {}, stack depth: {}, queue length: {}",
+        task.id(),
         prev_deadline,
         stack.len(),
         queue.iter().count(),
@@ -220,7 +223,7 @@ extern "C" fn run_task<M: Monotonic<Instant = Timestamp>>() {
         && q_t.abs_deadline() < *min_deadline
     {
         let task = queue.pop().unwrap();
-        defmt::trace!("[RESCHEDULE TASK]");
+        defmt::trace!("[RESCHEDULE TASK] ID: {}", task.id());
         Scheduler::<M>::execute(cs, task, M::now());
     }
 }
