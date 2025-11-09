@@ -2,7 +2,7 @@ use core::cell::UnsafeCell;
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use atsamd_hal::pac::{NVIC, SCB};
+use atsamd_hal::pac::{DWT, NVIC, SCB};
 use cortex_m::interrupt;
 use heapless::Vec;
 use heapless::sorted_linked_list::{Min, SortedLinkedList};
@@ -116,10 +116,19 @@ where
 
         if task.abs_deadline() < min_dl || stack.is_empty() {
             Self::execute(cs, task);
+            let cyccnt = DWT::cycle_count();
+            defmt::warn!("Schedule cycle count (preempt): {}", cyccnt);
         } else {
             {
                 let queue = unsafe { &mut *PARKED_QUEUE.get_mut(&cs) };
                 queue.push(task).unwrap();
+                let cyccnt = DWT::cycle_count();
+                let queue_len = queue.iter().count() - 1;
+                defmt::warn!(
+                    "Schedule cycle count (enqueue): {}, queue len: {}",
+                    cyccnt,
+                    queue_len
+                );
             }
         }
     }
