@@ -63,12 +63,15 @@ fn main() -> ! {
     core.SYST.enable_interrupt();
     // core.SYST.enable_counter();
 
+    // NOTE: change the queue length here to get different results in function of
+    // queue length
     for i in 0..64 {
-        let deadline = Deadline::millis(1000 - i * 10);
-        SCHEDULER.enqueue(Task::new(deadline.ticks(), software_task));
+        let deadline = Deadline::millis(1000 - 10 * i).ticks();
+        SCHEDULER.enqueue(Task::new(deadline, software_task));
     }
 
-    SCHEDULER.schedule(Task::new(Deadline::millis(1).ticks(), software_task));
+    SCHEDULER.schedule(Task::new(Deadline::millis(10).ticks(), software_task));
+    SCHEDULER.schedule(Task::new(Deadline::micros(1).ticks(), software_task));
 
     defmt::debug!("[IDLE START]");
     SCHEDULER.idle();
@@ -94,7 +97,7 @@ fn software_task() {
 }
 
 fn systick_task() {
-    asm::delay(4_000);
+    asm::delay(8_000_000);
     defmt::info!("[TASK 2] Systick task complete");
 }
 
