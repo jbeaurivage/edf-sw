@@ -170,13 +170,13 @@ where
 
         loop {
             let cs = CsGuard::new();
-            reset_cyccnt();
+            // reset_cyccnt();
             let queue = unsafe { &mut *PARKED_QUEUE.get_mut(&cs) };
             let task = queue.pop();
 
             if let Some(t) = task {
-                let cyccnt = DWT::cycle_count();
-                defmt::warn!("Idle cycle count: {}", cyccnt);
+                // let cyccnt = DWT::cycle_count();
+                // defmt::warn!("Idle cycle count: {}", cyccnt);
                 Self::execute(cs, t);
             }
         }
@@ -199,7 +199,7 @@ extern "C" fn run_task<M: Monotonic<Instant = Timestamp>>() {
     callback();
 
     // And cleanup after ourselves
-    // reset_cyccnt();
+    reset_cyccnt();
     let cs = CsGuard::new();
     let (stack, min_deadline, queue) = unsafe {
         (
@@ -222,8 +222,9 @@ extern "C" fn run_task<M: Monotonic<Instant = Timestamp>>() {
         let task = queue.pop().unwrap();
         Scheduler::<M>::execute(cs, task);
 
-        // let cyccnt = DWT::cycle_count();
-        // defmt::warn!("Task cleanup (reschedule) cycle count: {}", cyccnt);
+        let cyccnt = DWT::cycle_count();
+        defmt::warn!("Task cleanup (reschedule) cycle count: {}", cyccnt);
+        defmt::warn!("Queue len: {}", queue.iter().count() + 1);
     }
 
     // let cyccnt = DWT::cycle_count();
