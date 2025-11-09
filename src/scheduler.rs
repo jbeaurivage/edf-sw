@@ -8,6 +8,7 @@ use defmt::Format;
 use heapless::Vec;
 use rtic_monotonics::Monotonic;
 
+use crate::benchmark::reset_cyccnt;
 use crate::critical_section::CsGuard;
 use crate::dispatchers::{DISPATCHERS, NUM_DISPATCHERS, dispatcher, dispatcher_irq};
 use crate::task::{RunningTask, ScheduledTask, Task};
@@ -131,24 +132,25 @@ where
 
         if task.abs_deadline() < min_dl || stack.is_empty() {
             Self::execute(cs, task);
-            let cyccnt = DWT::cycle_count();
-            defmt::warn!("Schedule cycle count (preempt): {}", cyccnt);
+            // let cyccnt = DWT::cycle_count();
+            // defmt::warn!("Schedule cycle count (preempt): {}", cyccnt);
         } else {
             {
                 let queue = unsafe { &mut *PARKED_QUEUE.get_mut(&cs) };
                 queue.push(task).unwrap();
-                let cyccnt = DWT::cycle_count();
-                let queue_len = queue.iter().count() - 1;
-                defmt::warn!(
-                    "Schedule cycle count (enqueue): {}, queue len: {}",
-                    cyccnt,
-                    queue_len
-                );
+                // let cyccnt = DWT::cycle_count();
+                // let queue_len = queue.iter().count() - 1;
+                // defmt::warn!(
+                //     "Schedule cycle count (enqueue): {}, queue len: {}",
+                //     cyccnt,
+                //     queue_len
+                // );
             }
         }
     }
 
     fn execute(cs: CsGuard, task: ScheduledTask) {
+        reset_cyccnt();
         let min_dl = unsafe { &mut *MIN_DEADLINE.get_mut(&cs) };
         let prev_dl = *min_dl;
         *min_dl = task.abs_deadline();
@@ -163,6 +165,8 @@ where
         let irq = dispatcher_irq(max_prio);
         unsafe { set_handler(irq, run_task::<M>) };
         NVIC::pend(dispatcher(max_prio));
+        let cyccnt = DWT::cycle_count();
+        defmt::warn!("Execute cycle count: {}", cyccnt);
     }
 
     pub fn idle(&self) -> ! {
