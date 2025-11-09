@@ -3,4 +3,4 @@ openocd:
 
 gdb:
 	DEFMT_LOG=trace cargo b
-	arm-none-eabi-gdb -x scripts/launch.gdb target/thumbv7em-none-eabihf/debug/edf-sw
+	arm-none-eabi-gdb -x scripts/debug.gdb target/thumbv7em-none-eabihf/debug/edf-sw
