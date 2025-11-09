@@ -209,8 +209,9 @@ extern "C" fn run_task() {
         );
     } else {
         defmt::warn!(
-            "Task cleanup (fall through) cycle count: {}",
-            now() - prev_count
+            "Task cleanup (fall through) cycle count: {}, queue len: {}",
+            now() - prev_count,
+            queue.len()
         );
     }
 }
