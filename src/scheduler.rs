@@ -107,6 +107,22 @@ impl Scheduler {
         // interrupt::enable();
     }
 
+    pub fn enqueue(&self, task: Task) {
+        let cs = CsGuard::new();
+        let now = now();
+        let (queue, min_dl) = unsafe {
+            (
+                &mut *PARKED_QUEUE.get_mut(&cs),
+                &mut *MIN_DEADLINE.get_mut(&cs),
+            )
+        };
+        let task = task.into_queued(now);
+        if task.abs_deadline() < *min_dl {
+            *min_dl = task.abs_deadline();
+        }
+        queue.push(task).unwrap();
+    }
+
     pub fn schedule(&self, task: Task) {
         self.check_init();
         // let prev_count = now();
@@ -162,18 +178,19 @@ impl Scheduler {
 /// Trampoline that takes care of launching the task, and restoring the
 /// scheduler state after its execution completes.
 extern "C" fn run_task() {
-    let prev_count = now();
+    // let prev_count = now();
     let (callback, prev_deadline) = unsafe {
         let cs = CsGuard::new();
         let task = (&*RUNNING_STACK.get_mut(&cs)).last().unwrap();
         (task.callback(), task.prev_deadline())
     };
 
-    defmt::warn!("Task setup cycle count: {}", now() - prev_count);
+    // defmt::warn!("Task setup cycle count: {}", now() - prev_count);
     // Finally call the actual task
     callback();
 
     // And cleanup after ourselves
+    let prev_count = now();
     let cs = CsGuard::new();
     let (stack, min_deadline) = unsafe {
         (
@@ -196,6 +213,16 @@ extern "C" fn run_task() {
         {
             let task = PARKED_QUEUE.remove(&cs, idx);
             Scheduler::execute(cs, task);
+
+            defmt::warn!(
+                "Task cleanup (reschedule) cycle count: {}",
+                now() - prev_count
+            );
+        } else {
+            defmt::warn!(
+                "Task cleanup (fall through) cycle count: {}",
+                now() - prev_count
+            );
         }
     }
 }
