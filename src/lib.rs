@@ -25,3 +25,11 @@ pub fn print_vtable() {
         );
     }
 }
+
+pub mod benchmark {
+    pub fn reset_cyccnt() {
+        let mut dwt = unsafe { cortex_m::peripheral::Peripherals::steal() }.DWT;
+        dwt.set_cycle_count(0);
+        dwt.enable_cycle_counter();
+    }
+}

@@ -11,6 +11,7 @@ use cortex_m::asm;
 use cortex_m::peripheral::DWT;
 use cortex_m::peripheral::scb::SystemHandler;
 
+use edf_sw::benchmark::reset_cyccnt;
 use fugit::ExtU32;
 use hal::rtc::rtic::rtc_clock;
 
@@ -69,14 +70,14 @@ fn main() -> ! {
     core.SYST.enable_interrupt();
     // core.SYST.enable_counter();
 
-    for i in 0..=16 {
+    for i in 0..=15 {
         let deadline = Deadline::millis(i + 1);
-        reset_dwt();
+        reset_cyccnt();
         SCHEDULER.schedule(Task::new(deadline, software_task));
     }
 
-    reset_dwt();
-    SCHEDULER.schedule(Task::new(Deadline::micros(60), software_task));
+    reset_cyccnt();
+    SCHEDULER.schedule(Task::new(Deadline::micros(120), software_task));
 
     defmt::debug!("[IDLE START]");
     SCHEDULER.idle();
@@ -84,7 +85,7 @@ fn main() -> ! {
 
 #[cortex_m_rt::exception]
 fn SysTick() {
-    reset_dwt();
+    reset_cyccnt();
     SCHEDULER.schedule(Task::new(Deadline::millis(2), systick_task));
 }
 
@@ -110,10 +111,4 @@ fn systick_task() {
 fn timer_task() {
     asm::delay(8_000);
     defmt::info!("[TASK 1] Timer task complete");
-}
-
-fn reset_dwt() {
-    let mut dwt = unsafe { cortex_m::peripheral::Peripherals::steal() }.DWT;
-    dwt.set_cycle_count(0);
-    dwt.enable_cycle_counter();
 }
