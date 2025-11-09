@@ -71,9 +71,9 @@ fn main() -> ! {
     // core.SYST.enable_counter();
 
     for i in 0..=15 {
-        let deadline = Deadline::millis(i + 1);
+        let deadline = Deadline::millis(16 - i);
         reset_cyccnt();
-        SCHEDULER.schedule(Task::new(deadline, software_task));
+        SCHEDULER.enqueue(Task::new(deadline, software_task));
     }
 
     reset_cyccnt();
