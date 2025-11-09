@@ -166,18 +166,19 @@ impl Scheduler {
 /// Trampoline that takes care of launching the task, and restoring the
 /// scheduler state after its execution completes.
 extern "C" fn run_task() {
-    let prev_count = now();
+    // let prev_count = now();
     let (callback, prev_deadline) = unsafe {
         let cs = CsGuard::new();
         let task = (&*RUNNING_STACK.get_mut(&cs)).last().unwrap();
         (task.callback(), task.prev_deadline())
     };
 
-    defmt::warn!("Task setup cycle count: {}", now() - prev_count);
+    // defmt::warn!("Task setup cycle count: {}", now() - prev_count);
     // Finally call the actual task
     callback();
 
     // And cleanup after ourselves
+    let prev_count = now();
     let cs = CsGuard::new();
     let (stack, min_deadline) = unsafe {
         (
@@ -200,6 +201,17 @@ extern "C" fn run_task() {
     {
         let task = unsafe { queue.pop_unchecked() };
         Scheduler::execute(cs, task);
+
+        defmt::warn!(
+            "Task cleanup (reschedule) cycle count: {}, queue length: {}",
+            now() - prev_count,
+            queue.len() + 1
+        );
+    } else {
+        defmt::warn!(
+            "Task cleanup (fall through) cycle count: {}",
+            now() - prev_count
+        );
     }
 }
 

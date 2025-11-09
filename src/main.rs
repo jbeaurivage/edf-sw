@@ -63,12 +63,12 @@ fn main() -> ! {
     core.SYST.enable_interrupt();
     // core.SYST.enable_counter();
 
-    SCHEDULER.schedule(Task::new(Deadline::millis(1).ticks(), software_task));
-
     for i in 0..=63 {
         let deadline = Deadline::millis(1000 - i * 10);
-        SCHEDULER.schedule(Task::new(deadline.ticks(), software_task));
+        SCHEDULER.enqueue(Task::new(deadline.ticks(), software_task));
     }
+
+    SCHEDULER.schedule(Task::new(Deadline::millis(1).ticks(), software_task));
 
     defmt::debug!("[IDLE START]");
     SCHEDULER.idle();
