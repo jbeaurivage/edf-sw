@@ -113,7 +113,7 @@ impl Scheduler {
 
     pub fn schedule(&self, task: Task) {
         self.check_init();
-        let prev_count = now();
+        // let prev_count = now();
 
         let cs = CsGuard::new();
         let now_ts = now();
@@ -123,21 +123,23 @@ impl Scheduler {
 
         if task.abs_deadline() < min_dl || stack.is_empty() {
             Self::execute(cs, task);
-            defmt::warn!("Schedule cycle count (preempt): {}", now() - prev_count);
+            // defmt::warn!("Schedule cycle count (preempt): {}", now() -
+            // prev_count);
         } else {
             {
                 let queue = unsafe { &mut *PARKED_QUEUE.get_mut(&cs) };
                 queue.push(task);
-                defmt::warn!(
-                    "Schedule cycle count (enqueue): {}, queue len: {}",
-                    now() - prev_count,
-                    queue.len() - 1
-                );
+                // defmt::warn!(
+                //     "Schedule cycle count (enqueue): {}, queue len: {}",
+                //     now() - prev_count,
+                //     queue.len() - 1
+                // );
             }
         }
     }
 
     fn execute(cs: CsGuard, task: ScheduledTask) {
+        let prev_count = now();
         let min_dl = unsafe { &mut *MIN_DEADLINE.get_mut(&cs) };
         let prev_dl = *min_dl;
         *min_dl = task.abs_deadline();
@@ -150,6 +152,7 @@ impl Scheduler {
         let irq = dispatcher_irq(max_prio);
         unsafe { set_handler(irq, run_task) };
         NVIC::pend(dispatcher(max_prio));
+        defmt::warn!("Execute cycle count: {}", now() - prev_count);
     }
 
     pub fn idle(&self) -> ! {
