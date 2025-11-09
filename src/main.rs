@@ -70,14 +70,14 @@ fn main() -> ! {
     core.SYST.enable_interrupt();
     // core.SYST.enable_counter();
 
-    for i in 0..=15 {
-        let deadline = Deadline::millis(16 - i);
-        reset_cyccnt();
-        SCHEDULER.enqueue(Task::new(deadline, software_task));
-    }
+    // for i in 0..=15 {
+    //     let deadline = Deadline::millis(16 - i);
+    //     reset_cyccnt();
+    //     SCHEDULER.enqueue(Task::new(deadline, software_task));
+    // }
 
     reset_cyccnt();
-    SCHEDULER.schedule(Task::new(Deadline::micros(120), software_task));
+    SCHEDULER.schedule(Task::new(Deadline::millis(2000), software_task));
 
     defmt::debug!("[IDLE START]");
     SCHEDULER.idle();
@@ -97,6 +97,10 @@ fn TC4() {
 }
 
 fn software_task() {
+    unsafe { cortex_m::Peripherals::steal() }
+        .SYST
+        .enable_counter();
+
     // Simulate blocking roughly for 2s with CPU running at 48 MHz
     asm::delay(96_000_000);
     defmt::info!("[TASK 0] Software task complete");
@@ -104,7 +108,7 @@ fn software_task() {
 }
 
 fn systick_task() {
-    asm::delay(4_000);
+    asm::delay(8_000_000);
     defmt::info!("[TASK 2] Systick task complete");
 }
 
