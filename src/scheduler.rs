@@ -138,7 +138,7 @@ where
     }
 
     fn execute(cs: CsGuard, task: ScheduledTask) {
-        reset_cyccnt();
+        // reset_cyccnt();
         let min_dl = unsafe { &mut *MIN_DEADLINE.get_mut(&cs) };
         let prev_dl = *min_dl;
         *min_dl = task.abs_deadline();
@@ -153,8 +153,8 @@ where
         let irq = dispatcher_irq(max_prio);
         unsafe { set_handler(irq, run_task::<M>) };
         NVIC::pend(dispatcher(max_prio));
-        let cyccnt = DWT::cycle_count();
-        defmt::warn!("Execute cycle count: {}", cyccnt);
+        // let cyccnt = DWT::cycle_count();
+        // defmt::warn!("Execute cycle count: {}", cyccnt);
     }
 
     pub fn idle(&self) -> ! {
@@ -179,12 +179,15 @@ where
 /// Trampoline that takes care of launching the task, and restoring the
 /// scheduler state after its execution completes.
 extern "C" fn run_task<M: Monotonic<Instant: IntoUnchecked<Timestamp> + Format>>() {
+    reset_cyccnt();
     let (callback, prev_deadline) = unsafe {
         let cs = CsGuard::new();
         let task = (&*RUNNING_STACK.get_mut(&cs)).last().unwrap();
         (task.callback(), task.prev_deadline())
     };
 
+    let cyccnt = DWT::cycle_count();
+    defmt::warn!("Task setup cycle count: {}", cyccnt);
     // Finally call the actual task
     callback();
 
