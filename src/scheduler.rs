@@ -106,6 +106,13 @@ where
         // interrupt::enable();
     }
 
+    pub fn enqueue(&self, task: Task) {
+        let cs = CsGuard::new();
+        let now = M::now();
+        let queue = unsafe { &mut *PARKED_QUEUE.get_mut(&cs) };
+        queue.push(task.into_queued(now)).unwrap();
+    }
+
     pub fn schedule(&self, task: Task) {
         self.check_init();
 
@@ -176,19 +183,22 @@ where
 /// Trampoline that takes care of launching the task, and restoring the
 /// scheduler state after its execution completes.
 extern "C" fn run_task<M: Monotonic<Instant = Timestamp>>() {
-    reset_cyccnt();
+    // reset_cyccnt();
     let (callback, prev_deadline) = unsafe {
         let cs = CsGuard::new();
         let task = (&*RUNNING_STACK.get_mut(&cs)).last().unwrap();
         (task.callback(), task.prev_deadline())
     };
 
-    let cyccnt = DWT::cycle_count();
-    defmt::warn!("Task setup cycle count: {}", cyccnt);
+    // let cyccnt = DWT::cycle_count();
+    // defmt::warn!("Task setup cycle count: {}", cyccnt);
     // Finally call the actual task
     callback();
 
+    reset_cyccnt();
+
     // And cleanup after ourselves
+    reset_cyccnt();
     let cs = CsGuard::new();
     let (stack, min_deadline, queue) = unsafe {
         (
@@ -210,5 +220,11 @@ extern "C" fn run_task<M: Monotonic<Instant = Timestamp>>() {
     {
         let task = queue.pop().unwrap();
         Scheduler::<M>::execute(cs, task);
+
+        let cyccnt = DWT::cycle_count();
+        defmt::warn!("Task cleanup (reschedule) cycle count: {}", cyccnt);
     }
+
+    let cyccnt = DWT::cycle_count();
+    defmt::warn!("Task cleanup (fall through) cycle count: {}", cyccnt);
 }
