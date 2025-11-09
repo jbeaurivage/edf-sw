@@ -184,9 +184,12 @@ where
         }
 
         loop {
+            reset_cyccnt();
             let cs = CsGuard::new();
             unsafe {
                 if let Some((idx, _)) = PARKED_QUEUE.get_most_urgent_task(&cs) {
+                    let cyccnt = DWT::cycle_count();
+                    defmt::warn!("Idle cycle count: {}", cyccnt);
                     let task = PARKED_QUEUE.remove(&cs, idx);
                     Self::execute(cs, task);
                 }
@@ -211,7 +214,7 @@ extern "C" fn run_task<M: Monotonic<Instant: IntoUnchecked<Timestamp> + Format>>
     callback();
 
     // And cleanup after ourselves
-    reset_cyccnt();
+    // reset_cyccnt();
     let cs = CsGuard::new();
     let (stack, min_deadline) = unsafe {
         (
@@ -235,11 +238,12 @@ extern "C" fn run_task<M: Monotonic<Instant: IntoUnchecked<Timestamp> + Format>>
             defmt::trace!("[RESCHEDULE TASK]");
             Scheduler::<M>::execute(cs, task);
 
-            let cyccnt = DWT::cycle_count();
-            defmt::warn!("Task cleanup (reschedule) cycle count: {}", cyccnt);
+            // let cyccnt = DWT::cycle_count();
+            // defmt::warn!("Task cleanup (reschedule) cycle count: {}",
+            // cyccnt);
         }
-    }
 
-    let cyccnt = DWT::cycle_count();
-    defmt::warn!("Task cleanup (fall through) cycle count: {}", cyccnt);
+        // let cyccnt = DWT::cycle_count();
+        // defmt::warn!("Task cleanup (fall through) cycle count: {}", cyccnt);
+    }
 }
