@@ -10,7 +10,6 @@ impl CsGuard {
     pub fn new() -> Self {
         let primask = primask::read();
         interrupt::disable();
-        defmt::trace!("[CS] →");
 
         Self { primask }
     }
@@ -18,7 +17,6 @@ impl CsGuard {
     pub unsafe fn restore_inner(&mut self) {
         if self.primask.is_active() {
             unsafe {
-                defmt::trace!("[CS] ←");
                 interrupt::enable();
             }
         }

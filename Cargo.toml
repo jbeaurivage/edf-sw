@@ -37,6 +37,6 @@ opt-level = 0
 debug = 2
 
 [profile.release]
-opt-level = "s"
+opt-level = 3
 debug = 2
 lto = "fat"
