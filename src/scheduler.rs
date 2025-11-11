@@ -100,33 +100,21 @@ impl Scheduler {
 
         let cs = CsGuard::new();
         let now = now();
-        let rel_dl = task.rel_deadline();
         let task = task.into_queued(now);
         let (stack, min_dl) =
             unsafe { (&mut *RUNNING_STACK.get_mut(&cs), *MIN_DEADLINE.get_mut(&cs)) };
 
-        defmt::debug!(
-            "[SCHEDULE] now: {}, rel dl: {}, abs dl: {}, min dl: {}",
-            now,
-            rel_dl,
-            task.abs_deadline(),
-            min_dl
-        );
-
         if task.abs_deadline() < min_dl || stack.is_empty() {
-            defmt::debug!("[PREEMPT]");
-            Self::execute(cs, task, now);
+            Self::execute(cs, task);
         } else {
             {
                 let queue = unsafe { &mut *PARKED_QUEUE.get_mut(&cs) };
-                defmt::debug!("[ENQUEUE] queue length: {}", queue.len());
-
                 queue.push(task).unwrap();
             }
         }
     }
 
-    fn execute(cs: CsGuard, task: ScheduledTask, now: Timestamp) {
+    fn execute(cs: CsGuard, task: ScheduledTask) {
         let min_dl = unsafe { &mut *MIN_DEADLINE.get_mut(&cs) };
         let prev_dl = *min_dl;
         *min_dl = task.abs_deadline();
@@ -137,14 +125,6 @@ impl Scheduler {
             .push(RunningTask::from_scheduled(task, prev_dl))
             .unwrap();
         let max_prio = stack.len() as u8;
-
-        defmt::debug!(
-            "[EXEC] prio: {}, now: {}, new dl: {}, prev dl: {}",
-            max_prio,
-            now,
-            &*min_dl,
-            prev_dl
-        );
 
         let irq = dispatcher_irq(max_prio);
         unsafe { set_handler(irq, run_task) };
@@ -184,12 +164,6 @@ extern "C" fn run_task() {
     // Restore previous deadline
     *min_deadline = prev_deadline;
 
-    defmt::debug!(
-        "[COMPLETE TASK] new dl: {}, stack depth: {}",
-        prev_deadline,
-        stack.len(),
-    );
-
     // It's possible that a task showed up in the queue as the previous task was
     // running. So we need to check if it would preempt the next task in line to
     // run, which would start as soon as the critical section exits.
@@ -198,8 +172,7 @@ extern "C" fn run_task() {
         && (task.abs_deadline() < *min_deadline || stack.is_empty())
     {
         let task = unsafe { queue.pop_unchecked() };
-        defmt::debug!("[RESCHEDULE TASK]");
-        Scheduler::execute(cs, task, now());
+        Scheduler::execute(cs, task);
     }
 }
 
