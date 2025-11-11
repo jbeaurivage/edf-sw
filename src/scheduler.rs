@@ -110,32 +110,21 @@ where
 
         let cs = CsGuard::new();
         let now = M::now();
-        let rel_dl = task.rel_deadline();
         let task = task.into_queued(now);
         let (stack, min_dl) =
             unsafe { (&mut *RUNNING_STACK.get_mut(&cs), *MIN_DEADLINE.get_mut(&cs)) };
 
-        defmt::trace!(
-            "[SCHEDULE] now: {}, rel dl: {}, abs dl: {}, min dl: {}",
-            now,
-            rel_dl,
-            task.abs_deadline(),
-            min_dl
-        );
-
         if task.abs_deadline() < min_dl || stack.is_empty() {
-            defmt::trace!("[PREEMPT]");
-            Self::execute(cs, task, now);
+            Self::execute(cs, task);
         } else {
             {
-                defmt::trace!("[ENQUEUE]");
                 let queue = unsafe { &mut *PARKED_QUEUE.get_mut(&cs) };
                 queue.push(task).unwrap();
             }
         }
     }
 
-    fn execute(cs: CsGuard, task: ScheduledTask, now: Timestamp) {
+    fn execute(cs: CsGuard, task: ScheduledTask) {
         let min_dl = unsafe { &mut *MIN_DEADLINE.get_mut(&cs) };
         let prev_dl = *min_dl;
         *min_dl = task.abs_deadline();
@@ -146,14 +135,6 @@ where
             .push(RunningTask::from_scheduled(task, prev_dl))
             .unwrap();
         let max_prio = stack.len() as u8;
-
-        defmt::trace!(
-            "[EXEC] prio: {}, now: {}, new dl: {}, prev dl: {}",
-            max_prio,
-            now,
-            &*min_dl,
-            prev_dl
-        );
 
         let irq = dispatcher_irq(max_prio);
         unsafe { set_handler(irq, run_task::<M>) };
@@ -173,8 +154,7 @@ where
             let task = queue.pop();
 
             if let Some(t) = task {
-                defmt::trace!("[DEQUEUE]");
-                Self::execute(cs, t, M::now());
+                Self::execute(cs, t);
             }
         }
     }
@@ -206,13 +186,6 @@ extern "C" fn run_task<M: Monotonic<Instant = Timestamp>>() {
     // Restore previous deadline
     *min_deadline = prev_deadline;
 
-    defmt::trace!(
-        "[COMPLETE TASK] new dl: {}, stack depth: {}, queue length: {}",
-        prev_deadline,
-        stack.len(),
-        queue.iter().count(),
-    );
-
     // It's possible that a task showed up in the queue as the previous task was
     // running. So we need to check if it would preempt the next task in line to
     // run, which would start as soon as the critical section exits.
@@ -220,7 +193,6 @@ extern "C" fn run_task<M: Monotonic<Instant = Timestamp>>() {
         && q_t.abs_deadline() < *min_deadline
     {
         let task = queue.pop().unwrap();
-        defmt::trace!("[RESCHEDULE TASK]");
-        Scheduler::<M>::execute(cs, task, M::now());
+        Scheduler::<M>::execute(cs, task);
     }
 }
