@@ -59,13 +59,8 @@ impl TaskQueue {
 }
 
 static RUNNING_STACK: TaskStack = TaskStack(UnsafeCell::new(Vec::new()));
-<<<<<<< HEAD
-static MIN_DEADLINE: MinDeadline = MinDeadline(UnsafeCell::new(Timestamp::from_ticks(u64::MAX)));
-static PARKED_QUEUE: TaskQueue = TaskQueue(UnsafeCell::new(Vec::new()));
-=======
 static MIN_DEADLINE: MinDeadline = MinDeadline(UnsafeCell::new(Timestamp::from_ticks(u32::MAX)));
-static PARKED_QUEUE: TaskQueue = TaskQueue(UnsafeCell::new(SortedLinkedList::new_usize()));
->>>>>>> b45794a (Use u32 as scheduler timestamp)
+static PARKED_QUEUE: TaskQueue = TaskQueue(UnsafeCell::new(Vec::new()));
 
 pub struct Scheduler<M>
 where
@@ -129,33 +124,22 @@ where
         self.check_init();
 
         let cs = CsGuard::new();
-        let now = M::now();
-        let rel_dl = task.rel_deadline();
-        let task = task.into_queued(now.into_unchecked());
+        let now = M::now().into_unchecked();
+        let task = task.into_queued(now);
         let (stack, min_dl) =
             unsafe { (&mut *RUNNING_STACK.get_mut(&cs), *MIN_DEADLINE.get_mut(&cs)) };
 
-        defmt::trace!(
-            "[SCHEDULE] now: {}, rel dl: {}, abs dl: {}, min dl: {}",
-            now,
-            rel_dl,
-            task.abs_deadline(),
-            min_dl
-        );
-
         if task.abs_deadline() < min_dl || stack.is_empty() {
-            defmt::trace!("[PREEMPT]");
-            Self::execute(cs, task, now.into_unchecked());
+            Self::execute(cs, task);
         } else {
             {
-                defmt::trace!("[ENQUEUE]");
                 let queue = unsafe { &mut *PARKED_QUEUE.get_mut(&cs) };
                 queue.push(task).unwrap();
             }
         }
     }
 
-    fn execute(cs: CsGuard, task: ScheduledTask, now: Timestamp) {
+    fn execute(cs: CsGuard, task: ScheduledTask) {
         let min_dl = unsafe { &mut *MIN_DEADLINE.get_mut(&cs) };
         let prev_dl = *min_dl;
         *min_dl = task.abs_deadline();
@@ -166,14 +150,6 @@ where
             .push(RunningTask::from_scheduled(task, prev_dl))
             .unwrap();
         let max_prio = stack.len() as u8;
-
-        defmt::trace!(
-            "[EXEC] prio: {}, now: {}, new dl: {}, prev dl: {}",
-            max_prio,
-            now,
-            &*min_dl,
-            prev_dl
-        );
 
         let irq = dispatcher_irq(max_prio);
         unsafe { set_handler(irq, run_task::<M>) };
@@ -192,8 +168,7 @@ where
             unsafe {
                 if let Some((idx, _)) = PARKED_QUEUE.get_most_urgent_task(&cs) {
                     let task = PARKED_QUEUE.remove(&cs, idx);
-                    defmt::trace!("[DEQUEUE]");
-                    Self::execute(cs, task, M::now().into_unchecked());
+                    Self::execute(cs, task);
                 }
             }
         }
@@ -225,12 +200,6 @@ extern "C" fn run_task<M: Monotonic<Instant: IntoUnchecked<Timestamp> + Format>>
     // Restore previous deadline
     *min_deadline = prev_deadline;
 
-    defmt::trace!(
-        "[COMPLETE TASK] new dl: {}, stack depth: {}",
-        prev_deadline,
-        stack.len(),
-    );
-
     // It's possible that a task showed up in the queue as the previous task was
     // running. So we need to check if it would preempt the next task in line to
     // run, which would start as soon as the critical section exits.
@@ -240,7 +209,7 @@ extern "C" fn run_task<M: Monotonic<Instant: IntoUnchecked<Timestamp> + Format>>
         {
             let task = PARKED_QUEUE.remove(&cs, idx);
             defmt::trace!("[RESCHEDULE TASK]");
-            Scheduler::<M>::execute(cs, task, M::now().into_unchecked());
+            Scheduler::<M>::execute(cs, task);
         }
     }
 }
