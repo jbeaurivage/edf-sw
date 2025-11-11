@@ -4,14 +4,15 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use atsamd_hal::pac::{NVIC, SCB};
 use cortex_m::interrupt;
+use defmt::Format;
 use heapless::Vec;
 use rtic_monotonics::Monotonic;
 
-use crate::Timestamp;
 use crate::critical_section::CsGuard;
 use crate::dispatchers::{DISPATCHERS, NUM_DISPATCHERS, dispatcher, dispatcher_irq};
 use crate::task::{RunningTask, ScheduledTask, Task};
 use crate::vector_table::set_handler;
+use crate::{IntoUnchecked, Timestamp};
 
 struct TaskStack(UnsafeCell<Vec<RunningTask, NUM_DISPATCHERS, u8>>);
 
@@ -58,20 +59,27 @@ impl TaskQueue {
 }
 
 static RUNNING_STACK: TaskStack = TaskStack(UnsafeCell::new(Vec::new()));
+<<<<<<< HEAD
 static MIN_DEADLINE: MinDeadline = MinDeadline(UnsafeCell::new(Timestamp::from_ticks(u64::MAX)));
 static PARKED_QUEUE: TaskQueue = TaskQueue(UnsafeCell::new(Vec::new()));
+=======
+static MIN_DEADLINE: MinDeadline = MinDeadline(UnsafeCell::new(Timestamp::from_ticks(u32::MAX)));
+static PARKED_QUEUE: TaskQueue = TaskQueue(UnsafeCell::new(SortedLinkedList::new_usize()));
+>>>>>>> b45794a (Use u32 as scheduler timestamp)
 
 pub struct Scheduler<M>
 where
-    M: Monotonic<Instant = Timestamp>,
+    M: Monotonic<Instant: IntoUnchecked<Timestamp>>,
 {
     ready: AtomicBool,
     mono: PhantomData<M>,
 }
 
-unsafe impl<M: Monotonic<Instant = Timestamp>> Sync for Scheduler<M> {}
+unsafe impl<M: Monotonic<Instant: IntoUnchecked<Timestamp>>> Sync for Scheduler<M> {}
 
-impl<M: Monotonic<Instant = Timestamp>> core::default::Default for Scheduler<M> {
+impl<M: Monotonic<Instant: IntoUnchecked<Timestamp> + Format>> core::default::Default
+    for Scheduler<M>
+{
     fn default() -> Self {
         Self::new()
     }
@@ -79,7 +87,7 @@ impl<M: Monotonic<Instant = Timestamp>> core::default::Default for Scheduler<M> 
 
 impl<M> Scheduler<M>
 where
-    M: Monotonic<Instant = Timestamp>,
+    M: Monotonic<Instant: IntoUnchecked<Timestamp> + Format>,
 {
     pub const fn new() -> Self {
         Self {
@@ -123,7 +131,7 @@ where
         let cs = CsGuard::new();
         let now = M::now();
         let rel_dl = task.rel_deadline();
-        let task = task.into_queued(now);
+        let task = task.into_queued(now.into_unchecked());
         let (stack, min_dl) =
             unsafe { (&mut *RUNNING_STACK.get_mut(&cs), *MIN_DEADLINE.get_mut(&cs)) };
 
@@ -137,7 +145,7 @@ where
 
         if task.abs_deadline() < min_dl || stack.is_empty() {
             defmt::trace!("[PREEMPT]");
-            Self::execute(cs, task, now);
+            Self::execute(cs, task, now.into_unchecked());
         } else {
             {
                 defmt::trace!("[ENQUEUE]");
@@ -185,7 +193,7 @@ where
                 if let Some((idx, _)) = PARKED_QUEUE.get_most_urgent_task(&cs) {
                     let task = PARKED_QUEUE.remove(&cs, idx);
                     defmt::trace!("[DEQUEUE]");
-                    Self::execute(cs, task, M::now());
+                    Self::execute(cs, task, M::now().into_unchecked());
                 }
             }
         }
@@ -194,7 +202,7 @@ where
 
 /// Trampoline that takes care of launching the task, and restoring the
 /// scheduler state after its execution completes.
-extern "C" fn run_task<M: Monotonic<Instant = Timestamp>>() {
+extern "C" fn run_task<M: Monotonic<Instant: IntoUnchecked<Timestamp> + Format>>() {
     let (callback, prev_deadline) = unsafe {
         let cs = CsGuard::new();
         let task = (&*RUNNING_STACK.get_mut(&cs)).last().unwrap();
@@ -232,7 +240,7 @@ extern "C" fn run_task<M: Monotonic<Instant = Timestamp>>() {
         {
             let task = PARKED_QUEUE.remove(&cs, idx);
             defmt::trace!("[RESCHEDULE TASK]");
-            Scheduler::<M>::execute(cs, task, M::now());
+            Scheduler::<M>::execute(cs, task, M::now().into_unchecked());
         }
     }
 }

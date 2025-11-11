@@ -1,6 +1,7 @@
 #![no_std]
 
 use atsamd_hal::fugit::{TimerDurationU64, TimerInstantU64};
+use fugit::{TimerDurationU32, TimerInstantU32};
 
 pub mod dispatchers;
 pub mod scheduler;
@@ -9,8 +10,25 @@ pub mod task;
 mod critical_section;
 mod vector_table;
 
-type Timestamp = TimerInstantU64<32768>;
-pub type Deadline = TimerDurationU64<32768>;
+type Timestamp = TimerInstantU32<32768>;
+pub type Deadline = TimerDurationU32<32768>;
+
+// TODO this is not great at all and should NOT be used for production!!
+pub unsafe trait IntoUnchecked<T> {
+    fn into_unchecked(self) -> T;
+}
+
+unsafe impl IntoUnchecked<Timestamp> for TimerInstantU64<32768> {
+    fn into_unchecked(self) -> Timestamp {
+        Timestamp::from_ticks(self.ticks() as u32)
+    }
+}
+
+unsafe impl IntoUnchecked<Deadline> for TimerDurationU64<32768> {
+    fn into_unchecked(self) -> Deadline {
+        Deadline::from_ticks(self.ticks() as u32)
+    }
+}
 
 /// Print the vector table
 pub fn print_vtable() {
