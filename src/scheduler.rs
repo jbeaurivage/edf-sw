@@ -109,7 +109,7 @@ impl Scheduler {
         } else {
             {
                 let queue = unsafe { &mut *PARKED_QUEUE.get_mut(&cs) };
-                queue.push(task).unwrap();
+                queue.push(task);
             }
         }
     }
@@ -121,9 +121,7 @@ impl Scheduler {
 
         let stack = unsafe { &mut *RUNNING_STACK.get_mut(&cs) };
 
-        stack
-            .push(RunningTask::from_scheduled(task, prev_dl))
-            .unwrap();
+        stack.push(RunningTask::from_scheduled(task, prev_dl));
         let max_prio = stack.len() as u8;
 
         let irq = dispatcher_irq(max_prio);
@@ -160,7 +158,8 @@ extern "C" fn run_task() {
         )
     };
 
-    stack.pop().unwrap();
+    let warn_unchecked_option = ();
+    stack.pop();
     // Restore previous deadline
     *min_deadline = prev_deadline;
 
