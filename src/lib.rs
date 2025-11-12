@@ -1,7 +1,5 @@
 #![no_std]
 
-use fugit::{TimerDurationU32, TimerInstantU32};
-
 pub mod dispatchers;
 pub mod scheduler;
 pub mod task;
@@ -9,25 +7,8 @@ pub mod task;
 mod critical_section;
 mod vector_table;
 
-type Timestamp = TimerInstantU32<32768>;
-pub type Deadline = TimerDurationU32<32768>;
-
-// TODO this is not great at all and should NOT be used for production!!
-pub unsafe trait IntoUnchecked<T> {
-    fn into_unchecked(self) -> T;
-}
-
-unsafe impl IntoUnchecked<Timestamp> for TimerInstantU32<32768> {
-    fn into_unchecked(self) -> Timestamp {
-        Timestamp::from_ticks(self.ticks() as u32)
-    }
-}
-
-unsafe impl IntoUnchecked<Deadline> for TimerDurationU32<32768> {
-    fn into_unchecked(self) -> Deadline {
-        Deadline::from_ticks(self.ticks() as u32)
-    }
-}
+type Timestamp = u32;
+pub type Deadline = u32;
 
 /// Print the vector table
 pub fn print_vtable() {
@@ -40,5 +21,13 @@ pub fn print_vtable() {
             vector_table::VECTOR_TABLE.addr() as usize + addr * 4,
             item
         );
+    }
+}
+
+pub mod benchmark {
+    pub fn reset_cyccnt() {
+        let mut dwt = unsafe { cortex_m::peripheral::Peripherals::steal() }.DWT;
+        dwt.set_cycle_count(0);
+        dwt.enable_cycle_counter();
     }
 }

@@ -2,32 +2,29 @@
 #![no_main]
 
 use atsamd_hal::clock::GenericClockController;
-use atsamd_hal::pac::{Interrupt, NVIC, Peripherals, interrupt};
+use atsamd_hal::pac::{DWT, Interrupt, NVIC, Peripherals, interrupt};
 use atsamd_hal::prelude::InterruptDrivenTimer;
 use atsamd_hal::timer::TimerCounter;
-use atsamd_hal::{self as hal};
 use cortex_m::asm;
 use cortex_m::peripheral::scb::SystemHandler;
-use fugit::ExtU32;
-use hal::rtc::rtic::rtc_clock;
+use edf_sw::benchmark::reset_cyccnt;
+use fugit::{Duration, ExtU32};
 use {defmt_rtt as _, panic_probe as _};
 
-use edf_sw::Deadline;
 use edf_sw::scheduler::Scheduler;
 use edf_sw::task::Task;
 
-hal::rtc_monotonic!(Mono, rtc_clock::Clock32k);
+type Deadline = Duration<u32, 1, 48_000_000>;
 
 #[unsafe(no_mangle)]
 static RTIC_ASYNC_MAX_LOGICAL_PRIO: u8 = 4;
 
-static SCHEDULER: Scheduler<Mono> = Scheduler::new();
+static SCHEDULER: Scheduler = Scheduler::new();
 
 #[cortex_m_rt::entry]
 fn main() -> ! {
     let mut peripherals = atsamd_hal::pac::Peripherals::take().unwrap();
     let mut core = atsamd_hal::pac::CorePeripherals::take().unwrap();
-    Mono::start(peripherals.rtc);
 
     let mut clocks = GenericClockController::with_external_32kosc(
         peripherals.gclk,
@@ -59,7 +56,14 @@ fn main() -> ! {
     core.SYST.enable_interrupt();
     core.SYST.enable_counter();
 
-    SCHEDULER.schedule(Task::new(Deadline::millis(500), software_task));
+    // Enable cycle counter, which acts as our system "timer"
+    DWT::unlock();
+    unsafe {
+        core.DCB.demcr.modify(|r| r | (1 << 24));
+    }
+    reset_cyccnt();
+
+    SCHEDULER.schedule(Task::new(Deadline::millis(500).ticks(), software_task));
 
     defmt::debug!("[IDLE START]");
     SCHEDULER.idle();
@@ -67,21 +71,21 @@ fn main() -> ! {
 
 #[cortex_m_rt::exception]
 fn SysTick() {
-    SCHEDULER.schedule(Task::new(Deadline::millis(2), systick_task));
+    SCHEDULER.schedule(Task::new(Deadline::millis(2).ticks(), systick_task));
 }
 
 #[interrupt]
 fn TC4() {
     let tc4 = unsafe { Peripherals::steal().tc4 };
     tc4.count16().intflag().write(|w| w.ovf().set_bit());
-    SCHEDULER.schedule(Task::new(Deadline::millis(20), timer_task));
+    SCHEDULER.schedule(Task::new(Deadline::millis(20).ticks(), timer_task));
 }
 
 fn software_task() {
     // Simulate blocking roughly for 2s with CPU running at 48 MHz
-    asm::delay(96_000_000);
+    asm::delay(16_000_000);
     defmt::info!("[TASK 0] Software task complete");
-    SCHEDULER.schedule(Task::new(Deadline::millis(1000), software_task));
+    SCHEDULER.schedule(Task::new(Deadline::millis(1000).ticks(), software_task));
 }
 
 fn systick_task() {
