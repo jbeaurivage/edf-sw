@@ -24,7 +24,7 @@ impl Task {
 
     pub(crate) fn into_queued(self, now: Timestamp) -> ScheduledTask {
         ScheduledTask {
-            deadline: now + self.rel_deadline,
+            deadline: now.wrapping_add(self.rel_deadline),
             callback: self.callback,
         }
     }

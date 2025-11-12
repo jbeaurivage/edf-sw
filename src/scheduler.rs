@@ -1,18 +1,15 @@
 use core::cell::UnsafeCell;
-use core::marker::PhantomData;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use atsamd_hal::pac::{NVIC, SCB};
+use atsamd_hal::pac::{DWT, NVIC, SCB};
 use cortex_m::interrupt;
-use defmt::Format;
 use heapless::Vec;
-use rtic_monotonics::Monotonic;
 
+use crate::Timestamp;
 use crate::critical_section::CsGuard;
 use crate::dispatchers::{DISPATCHERS, NUM_DISPATCHERS, dispatcher, dispatcher_irq};
 use crate::task::{RunningTask, ScheduledTask, Task};
 use crate::vector_table::set_handler;
-use crate::{IntoUnchecked, Timestamp};
 
 struct TaskStack(UnsafeCell<Vec<RunningTask, NUM_DISPATCHERS, u8>>);
 
@@ -59,35 +56,25 @@ impl TaskQueue {
 }
 
 static RUNNING_STACK: TaskStack = TaskStack(UnsafeCell::new(Vec::new()));
-static MIN_DEADLINE: MinDeadline = MinDeadline(UnsafeCell::new(Timestamp::from_ticks(u32::MAX)));
+static MIN_DEADLINE: MinDeadline = MinDeadline(UnsafeCell::new(u32::MAX));
 static PARKED_QUEUE: TaskQueue = TaskQueue(UnsafeCell::new(Vec::new()));
 
-pub struct Scheduler<M>
-where
-    M: Monotonic<Instant: IntoUnchecked<Timestamp>>,
-{
+pub struct Scheduler {
     ready: AtomicBool,
-    mono: PhantomData<M>,
 }
 
-unsafe impl<M: Monotonic<Instant: IntoUnchecked<Timestamp>>> Sync for Scheduler<M> {}
+unsafe impl Sync for Scheduler {}
 
-impl<M: Monotonic<Instant: IntoUnchecked<Timestamp> + Format>> core::default::Default
-    for Scheduler<M>
-{
+impl core::default::Default for Scheduler {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<M> Scheduler<M>
-where
-    M: Monotonic<Instant: IntoUnchecked<Timestamp> + Format>,
-{
+impl Scheduler {
     pub const fn new() -> Self {
         Self {
             ready: AtomicBool::new(false),
-            mono: PhantomData,
         }
     }
 
@@ -124,13 +111,13 @@ where
         self.check_init();
 
         let cs = CsGuard::new();
-        let now = M::now();
+        let now = now();
         let rel_dl = task.rel_deadline();
-        let task = task.into_queued(now.into_unchecked());
+        let task = task.into_queued(now);
         let (stack, min_dl) =
             unsafe { (&mut *RUNNING_STACK.get_mut(&cs), *MIN_DEADLINE.get_mut(&cs)) };
 
-        defmt::trace!(
+        defmt::debug!(
             "[SCHEDULE] now: {}, rel dl: {}, abs dl: {}, min dl: {}",
             now,
             rel_dl,
@@ -139,12 +126,13 @@ where
         );
 
         if task.abs_deadline() < min_dl || stack.is_empty() {
-            defmt::trace!("[PREEMPT]");
-            Self::execute(cs, task, now.into_unchecked());
+            defmt::debug!("[PREEMPT]");
+            Self::execute(cs, task, now);
         } else {
             {
-                defmt::trace!("[ENQUEUE]");
                 let queue = unsafe { &mut *PARKED_QUEUE.get_mut(&cs) };
+                defmt::debug!("[ENQUEUE] queue length: {}", queue.len());
+
                 queue.push(task).unwrap();
             }
         }
@@ -162,7 +150,7 @@ where
             .unwrap();
         let max_prio = stack.len() as u8;
 
-        defmt::trace!(
+        defmt::debug!(
             "[EXEC] prio: {}, now: {}, new dl: {}, prev dl: {}",
             max_prio,
             now,
@@ -171,7 +159,7 @@ where
         );
 
         let irq = dispatcher_irq(max_prio);
-        unsafe { set_handler(irq, run_task::<M>) };
+        unsafe { set_handler(irq, run_task) };
         NVIC::pend(dispatcher(max_prio));
     }
 
@@ -187,8 +175,8 @@ where
             unsafe {
                 if let Some((idx, _)) = PARKED_QUEUE.get_most_urgent_task(&cs) {
                     let task = PARKED_QUEUE.remove(&cs, idx);
-                    defmt::trace!("[DEQUEUE]");
-                    Self::execute(cs, task, M::now());
+                    defmt::debug!("[DEQUEUE]");
+                    Self::execute(cs, task, now());
                 }
             }
         }
@@ -197,7 +185,7 @@ where
 
 /// Trampoline that takes care of launching the task, and restoring the
 /// scheduler state after its execution completes.
-extern "C" fn run_task<M: Monotonic<Instant: IntoUnchecked<Timestamp> + Format>>() {
+extern "C" fn run_task() {
     let (callback, prev_deadline) = unsafe {
         let cs = CsGuard::new();
         let task = (&*RUNNING_STACK.get_mut(&cs)).last().unwrap();
@@ -220,7 +208,7 @@ extern "C" fn run_task<M: Monotonic<Instant: IntoUnchecked<Timestamp> + Format>>
     // Restore previous deadline
     *min_deadline = prev_deadline;
 
-    defmt::trace!(
+    defmt::debug!(
         "[COMPLETE TASK] new dl: {}, stack depth: {}",
         prev_deadline,
         stack.len(),
@@ -234,8 +222,12 @@ extern "C" fn run_task<M: Monotonic<Instant: IntoUnchecked<Timestamp> + Format>>
             && task.abs_deadline() < *min_deadline
         {
             let task = PARKED_QUEUE.remove(&cs, idx);
-            defmt::trace!("[RESCHEDULE TASK]");
-            Scheduler::<M>::execute(cs, task, M::now());
+            defmt::debug!("[RESCHEDULE TASK]");
+            Scheduler::execute(cs, task, now());
         }
     }
+}
+
+fn now() -> u32 {
+    DWT::cycle_count()
 }
