@@ -164,21 +164,9 @@ impl Scheduler {
     }
 
     pub fn idle(&self) -> ! {
-        self.check_init();
-
-        unsafe {
-            interrupt::enable();
-        }
-
+        unsafe { cortex_m::interrupt::enable() };
         loop {
-            let cs = CsGuard::new();
-            unsafe {
-                if let Some((idx, _)) = PARKED_QUEUE.get_most_urgent_task(&cs) {
-                    let task = PARKED_QUEUE.remove(&cs, idx);
-                    defmt::debug!("[DEQUEUE]");
-                    Self::execute(cs, task, now());
-                }
-            }
+            cortex_m::asm::wfi();
         }
     }
 }
@@ -219,7 +207,7 @@ extern "C" fn run_task() {
     // run, which would start as soon as the critical section exits.
     unsafe {
         if let Some((idx, task)) = PARKED_QUEUE.get_most_urgent_task(&cs)
-            && task.abs_deadline() < *min_deadline
+            && (task.abs_deadline() < *min_deadline || stack.is_empty())
         {
             let task = PARKED_QUEUE.remove(&cs, idx);
             defmt::debug!("[RESCHEDULE TASK]");
