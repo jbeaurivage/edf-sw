@@ -32,12 +32,12 @@ impl MinDeadline {
 }
 
 // TODO get rid of this magic number
-struct TaskQueue(UnsafeCell<Vec<ScheduledTask, 16, u8>>);
+struct TaskQueue(UnsafeCell<Vec<ScheduledTask, 64, u8>>);
 
 unsafe impl Sync for TaskQueue {}
 
 impl TaskQueue {
-    fn get_mut(&self, _cs: &CsGuard) -> *mut Vec<ScheduledTask, 16, u8> {
+    fn get_mut(&self, _cs: &CsGuard) -> *mut Vec<ScheduledTask, 64, u8> {
         self.0.get()
     }
 
@@ -109,19 +109,26 @@ impl Scheduler {
 
     pub fn schedule(&self, task: Task) {
         self.check_init();
+        let prev_count = now();
 
         let cs = CsGuard::new();
-        let now = now();
-        let task = task.into_queued(now);
+        let now_ts = now();
+        let task = task.into_queued(now_ts);
         let (stack, min_dl) =
             unsafe { (&mut *RUNNING_STACK.get_mut(&cs), *MIN_DEADLINE.get_mut(&cs)) };
 
         if task.abs_deadline() < min_dl || stack.is_empty() {
             Self::execute(cs, task);
+            defmt::warn!("Schedule cycle count (preempt): {}", now() - prev_count);
         } else {
             {
                 let queue = unsafe { &mut *PARKED_QUEUE.get_mut(&cs) };
                 queue.push(task);
+                defmt::warn!(
+                    "Schedule cycle count (enqueue): {}, queue len: {}",
+                    now() - prev_count,
+                    queue.len() - 1
+                );
             }
         }
     }
