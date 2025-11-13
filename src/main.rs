@@ -44,26 +44,31 @@ fn main() -> ! {
     let timer_clock = clocks.gclk0();
     let tc45 = &clocks.tc4_tc5(&timer_clock).unwrap();
 
-    SCHEDULER.init(&mut core.NVIC, &mut core.SCB);
-
-    // Instantiate a timer object for the TC4 timer/counter
-    let mut timer = TimerCounter::tc4_(tc45, peripherals.tc4, &mut peripherals.mclk);
-    timer.start(100.millis());
-    timer.enable_interrupt();
-
-    core.SYST.set_reload(8_000_000 - 1);
-    core.SYST.clear_current();
-    core.SYST.enable_interrupt();
-    core.SYST.enable_counter();
-
-    // Enable cycle counter, which acts as our system "timer"
+    // Enable cycle counter for measurements
     DWT::unlock();
     unsafe {
         core.DCB.demcr.modify(|r| r | (1 << 24));
     }
     reset_cyccnt();
 
-    SCHEDULER.schedule(Task::new(Deadline::millis(500).ticks(), software_task));
+    SCHEDULER.init(&mut core.NVIC, &mut core.SCB);
+
+    // Instantiate a timer object for the TC4 timer/counter
+    let mut timer = TimerCounter::tc4_(tc45, peripherals.tc4, &mut peripherals.mclk);
+    timer.start(100.millis());
+    // timer.enable_interrupt();
+
+    core.SYST.set_reload(8_000_000 - 1);
+    core.SYST.clear_current();
+    core.SYST.enable_interrupt();
+    // core.SYST.enable_counter();
+
+    SCHEDULER.schedule(Task::new(Deadline::millis(1).ticks(), software_task));
+
+    for i in 0..=63 {
+        let deadline = Deadline::millis(1000 - i * 10);
+        SCHEDULER.schedule(Task::new(deadline.ticks(), software_task));
+    }
 
     defmt::debug!("[IDLE START]");
     SCHEDULER.idle();
@@ -85,7 +90,7 @@ fn software_task() {
     // Simulate blocking roughly for 2s with CPU running at 48 MHz
     asm::delay(16_000_000);
     defmt::info!("[TASK 0] Software task complete");
-    SCHEDULER.schedule(Task::new(Deadline::millis(1000).ticks(), software_task));
+    // SCHEDULER.schedule(Task::new(Deadline::millis(1000), software_task));
 }
 
 fn systick_task() {

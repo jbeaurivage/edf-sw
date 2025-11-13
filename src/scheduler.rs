@@ -33,12 +33,12 @@ impl MinDeadline {
 }
 
 // TODO get rid of this magic number
-struct TaskQueue(UnsafeCell<BinaryHeap<ScheduledTask, Min, 16>>);
+struct TaskQueue(UnsafeCell<BinaryHeap<ScheduledTask, Min, 64>>);
 
 unsafe impl Sync for TaskQueue {}
 
 impl TaskQueue {
-    fn get_mut(&self, _cs: &CsGuard) -> *mut BinaryHeap<ScheduledTask, Min, 16> {
+    fn get_mut(&self, _cs: &CsGuard) -> *mut BinaryHeap<ScheduledTask, Min, 64> {
         self.0.get()
     }
 }
@@ -95,21 +95,44 @@ impl Scheduler {
         // interrupt::enable();
     }
 
-    pub fn schedule(&self, task: Task) {
-        self.check_init();
-
+    pub fn enqueue(&self, task: Task) {
         let cs = CsGuard::new();
         let now = now();
+        let (queue, min_dl) = unsafe {
+            (
+                &mut *PARKED_QUEUE.get_mut(&cs),
+                &mut *MIN_DEADLINE.get_mut(&cs),
+            )
+        };
         let task = task.into_queued(now);
+        if task.abs_deadline() < *min_dl {
+            *min_dl = task.abs_deadline();
+        }
+        queue.push(task).unwrap();
+    }
+
+    pub fn schedule(&self, task: Task) {
+        self.check_init();
+        let prev_count = now();
+
+        let cs = CsGuard::new();
+        let now_ts = now();
+        let task = task.into_queued(now_ts);
         let (stack, min_dl) =
             unsafe { (&mut *RUNNING_STACK.get_mut(&cs), *MIN_DEADLINE.get_mut(&cs)) };
 
         if task.abs_deadline() < min_dl || stack.is_empty() {
             Self::execute(cs, task);
+            defmt::warn!("Schedule cycle count (preempt): {}", now() - prev_count);
         } else {
             {
                 let queue = unsafe { &mut *PARKED_QUEUE.get_mut(&cs) };
                 queue.push(task);
+                defmt::warn!(
+                    "Schedule cycle count (enqueue): {}, queue len: {}",
+                    now() - prev_count,
+                    queue.len() - 1
+                );
             }
         }
     }
