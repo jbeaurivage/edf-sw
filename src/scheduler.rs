@@ -3,7 +3,8 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use atsamd_hal::pac::{DWT, NVIC, SCB};
 use cortex_m::interrupt;
-use heapless::Vec;
+use heapless::binary_heap::Min;
+use heapless::{BinaryHeap, Vec};
 
 use crate::Timestamp;
 use crate::critical_section::CsGuard;
@@ -32,32 +33,19 @@ impl MinDeadline {
 }
 
 // TODO get rid of this magic number
-struct TaskQueue(UnsafeCell<Vec<ScheduledTask, 16, u8>>);
+struct TaskQueue(UnsafeCell<BinaryHeap<ScheduledTask, Min, 16>>);
 
 unsafe impl Sync for TaskQueue {}
 
 impl TaskQueue {
-    fn get_mut(&self, _cs: &CsGuard) -> *mut Vec<ScheduledTask, 16, u8> {
+    fn get_mut(&self, _cs: &CsGuard) -> *mut BinaryHeap<ScheduledTask, Min, 16> {
         self.0.get()
-    }
-
-    unsafe fn get_most_urgent_task(&self, cs: &CsGuard) -> Option<(usize, &ScheduledTask)> {
-        unsafe {
-            (&*self.get_mut(cs))
-                .iter()
-                .enumerate()
-                .min_by_key(|(_, t)| t.abs_deadline())
-        }
-    }
-
-    unsafe fn remove(&self, cs: &CsGuard, index: usize) -> ScheduledTask {
-        unsafe { (&mut *self.get_mut(cs)).swap_remove(index) }
     }
 }
 
 static RUNNING_STACK: TaskStack = TaskStack(UnsafeCell::new(Vec::new()));
 static MIN_DEADLINE: MinDeadline = MinDeadline(UnsafeCell::new(u32::MAX));
-static PARKED_QUEUE: TaskQueue = TaskQueue(UnsafeCell::new(Vec::new()));
+static PARKED_QUEUE: TaskQueue = TaskQueue(UnsafeCell::new(BinaryHeap::new()));
 
 pub struct Scheduler {
     ready: AtomicBool,
@@ -205,14 +193,13 @@ extern "C" fn run_task() {
     // It's possible that a task showed up in the queue as the previous task was
     // running. So we need to check if it would preempt the next task in line to
     // run, which would start as soon as the critical section exits.
-    unsafe {
-        if let Some((idx, task)) = PARKED_QUEUE.get_most_urgent_task(&cs)
-            && (task.abs_deadline() < *min_deadline || stack.is_empty())
-        {
-            let task = PARKED_QUEUE.remove(&cs, idx);
-            defmt::debug!("[RESCHEDULE TASK]");
-            Scheduler::execute(cs, task, now());
-        }
+    let queue = unsafe { &mut *PARKED_QUEUE.get_mut(&cs) };
+    if let Some(task) = queue.peek()
+        && (task.abs_deadline() < *min_deadline || stack.is_empty())
+    {
+        let task = unsafe { queue.pop_unchecked() };
+        defmt::debug!("[RESCHEDULE TASK]");
+        Scheduler::execute(cs, task, now());
     }
 }
 

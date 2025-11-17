@@ -30,7 +30,8 @@ impl Task {
     }
 }
 
-#[derive(Debug)]
+#[allow(unpredictable_function_pointer_comparisons)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct ScheduledTask {
     deadline: Timestamp,
     callback: fn(),
@@ -39,6 +40,18 @@ pub(crate) struct ScheduledTask {
 impl ScheduledTask {
     pub fn abs_deadline(&self) -> Timestamp {
         self.deadline
+    }
+}
+
+impl PartialOrd for ScheduledTask {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ScheduledTask {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.deadline.cmp(&other.deadline)
     }
 }
 
