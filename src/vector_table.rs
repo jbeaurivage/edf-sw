@@ -3,10 +3,6 @@ use cortex_m::peripheral::SCB;
 
 // TODO This is platform dependent
 const VTABLE_LEN: usize = 152;
-// TODO is the vtable always at 0x0 on reset?
-// TODO should probably read VTOR instead
-#[allow(clippy::zero_ptr)]
-const VTABLE_START: *const usize = 0x0 as *const _;
 
 pub(super) static VECTOR_TABLE: VTable = VTable(UnsafeCell::new([0; VTABLE_LEN]));
 
@@ -45,7 +41,8 @@ pub fn copy_vector_table(scb: &mut SCB) {
         //     VECTOR_TABLE.addr().offset(1) as _,
         //     VTABLE_LEN - 1,
         // );
-        copy_array(VECTOR_TABLE.addr() as *mut _, VTABLE_START, VTABLE_LEN);
+        let vtable_start = scb.vtor.read() as _;
+        copy_array(VECTOR_TABLE.addr() as *mut _, vtable_start, VTABLE_LEN);
         scb.vtor.write(VECTOR_TABLE.addr() as _);
     }
 }
