@@ -2,15 +2,14 @@ use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use cortex_m::interrupt;
-use cortex_m::peripheral::{DWT, NVIC, SCB};
+use cortex_m::peripheral::{DWT, NVIC};
 use heapless::binary_heap::Min;
 use heapless::{BinaryHeap, Vec};
 
 use crate::Timestamp;
 use crate::critical_section::CsGuard;
-use crate::dispatchers::{DISPATCHERS, NUM_DISPATCHERS, dispatcher, dispatcher_irq};
+use crate::dispatchers::{DISPATCHERS, NUM_DISPATCHERS, dispatcher};
 use crate::task::{RunningTask, ScheduledTask, Task};
-use crate::vector_table::set_handler;
 
 struct TaskStack(UnsafeCell<Vec<RunningTask, NUM_DISPATCHERS, u8>>);
 
@@ -72,12 +71,8 @@ impl Scheduler {
         }
     }
 
-    pub fn init(&self, nvic: &mut NVIC, scb: &mut SCB) {
+    pub fn init(&self, nvic: &mut NVIC) {
         interrupt::disable();
-
-        // Before we can start messing with the vector table, we must first copy it over
-        // to RAM
-        crate::vector_table::copy_vector_table(scb);
 
         for (level, interrupt) in DISPATCHERS.iter().enumerate() {
             // TODO remove this "8" magic number somehow, which is the number of priorities
@@ -151,8 +146,6 @@ impl Scheduler {
             prev_dl
         );
 
-        let irq = dispatcher_irq(max_prio);
-        unsafe { set_handler(irq, run_task) };
         NVIC::pend(dispatcher(max_prio));
     }
 
@@ -166,7 +159,8 @@ impl Scheduler {
 
 /// Trampoline that takes care of launching the task, and restoring the
 /// scheduler state after its execution completes.
-extern "C" fn run_task() {
+#[inline(always)]
+pub(super) extern "C" fn run_task() {
     let (callback, prev_deadline) = unsafe {
         let cs = CsGuard::new();
         let task = (&*RUNNING_STACK.get_mut(&cs)).last().unwrap();

@@ -22,12 +22,21 @@ pub const fn dispatcher(level: u8) -> Interrupt {
 
 /// Level 1 dispatcher placeholder
 #[interrupt]
-fn SERCOM0_0() {}
+#[allow(non_snake_case)]
+fn SERCOM0_0() {
+    crate::scheduler::run_task();
+}
 
 /// Level 2 dispatcher placeholder
 #[interrupt]
-fn SERCOM0_1() {}
+#[allow(non_snake_case)]
+fn SERCOM0_1() {
+    crate::scheduler::run_task();
+}
 
 /// Level 3 dispatcher placeholder
 #[interrupt]
-fn SERCOM0_2() {}
+#[allow(non_snake_case)]
+fn SERCOM0_2() {
+    crate::scheduler::run_task();
+}

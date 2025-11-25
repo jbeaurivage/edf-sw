@@ -7,25 +7,9 @@ pub mod scheduler;
 pub mod task;
 
 mod critical_section;
-mod vector_table;
 
 type Timestamp = u32;
 pub type Deadline = u32;
-
-/// Print the vector table
-#[cfg(feature = "defmt")]
-pub fn print_vtable() {
-    for (addr, item) in unsafe { vector_table::VECTOR_TABLE.get() }
-        .iter()
-        .enumerate()
-    {
-        defmt::debug!(
-            "ADDR: {:#x}, item: {:#x}",
-            vector_table::VECTOR_TABLE.addr() as usize + addr * 4,
-            item
-        );
-    }
-}
 
 pub mod benchmark {
     pub fn reset_cyccnt() {

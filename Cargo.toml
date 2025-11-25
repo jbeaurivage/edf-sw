@@ -10,8 +10,6 @@ heapless = { version = "0.9.1", features = ["portable-atomic"] }
 
 defmt = { version = "1.0.1", optional = true }
 
-[build-dependencies]
-cc = "1.2.44"
 
 [features]
 defmt = ["dep:defmt", "fugit/defmt", "heapless/defmt"]
