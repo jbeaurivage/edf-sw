@@ -4,39 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-cortex-m = { version = "0.7.7", features = ["critical-section-single-core", "inline-asm"] }
-cortex-m-rt = "0.7.5"
-defmt = "1.0.1"
-defmt-rtt = "1.1.0"
-fugit = { version = "0.3.7", features = ["defmt"] }
-heapless = { version = "0.9.1", features = ["defmt", "portable-atomic"] }
-panic-probe = { version = "1.0.0", features = ["defmt", "print-defmt"] }
-rtic = { version = "2.2.0", features = ["thumbv7-backend"] }
-rtic-monotonics = { version = "2.1.0", features = ["cortex-m-systick"] }
-rtic-time = "2.0.1"
+cortex-m = "0.7.7"
+fugit = "0.3.7"
+heapless = { version = "0.9.1", features = ["portable-atomic"] }
 
-[dependencies.atsamd-hal]
-default-features = false
-git = "https://github.com/atsamd-rs/atsamd.git"
-version = "0.22.2"
-
-[features]
-# ask the HAL to enable atsamd51j support
-default = [
-    "atsamd-hal/samd51j-rt",
-    "atsamd-hal/samd51j",
-    "atsamd-hal/rtic",
-    "atsamd-hal/defmt",
-]
+defmt = { version = "1.0.1", optional = true }
 
 [build-dependencies]
 cc = "1.2.44"
 
-[profile.dev]
-opt-level = 0
-debug = 2
-
-[profile.release]
-opt-level = "s"
-debug = 2
-lto = "fat"
+[features]
+defmt = ["dep:defmt", "fugit/defmt", "heapless/defmt"]

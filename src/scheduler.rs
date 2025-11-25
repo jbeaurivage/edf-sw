@@ -1,8 +1,8 @@
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use atsamd_hal::pac::{DWT, NVIC, SCB};
 use cortex_m::interrupt;
+use cortex_m::peripheral::{DWT, NVIC, SCB};
 use heapless::binary_heap::Min;
 use heapless::{BinaryHeap, Vec};
 
@@ -100,11 +100,13 @@ impl Scheduler {
 
         let cs = CsGuard::new();
         let now = now();
+        #[cfg(feature = "defmt")]
         let rel_dl = task.rel_deadline();
         let task = task.into_queued(now);
         let (stack, min_dl) =
             unsafe { (&mut *RUNNING_STACK.get_mut(&cs), *MIN_DEADLINE.get_mut(&cs)) };
 
+        #[cfg(feature = "defmt")]
         defmt::debug!(
             "[SCHEDULE] now: {}, rel dl: {}, abs dl: {}, min dl: {}",
             now,
@@ -114,11 +116,13 @@ impl Scheduler {
         );
 
         if task.abs_deadline() < min_dl || stack.is_empty() {
+            #[cfg(feature = "defmt")]
             defmt::debug!("[PREEMPT]");
             Self::execute(cs, task, now);
         } else {
             {
                 let queue = unsafe { &mut *PARKED_QUEUE.get_mut(&cs) };
+                #[cfg(feature = "defmt")]
                 defmt::debug!("[ENQUEUE] queue length: {}", queue.len());
 
                 queue.push(task).unwrap();
@@ -138,6 +142,7 @@ impl Scheduler {
             .unwrap();
         let max_prio = stack.len() as u8;
 
+        #[cfg(feature = "defmt")]
         defmt::debug!(
             "[EXEC] prio: {}, now: {}, new dl: {}, prev dl: {}",
             max_prio,
@@ -184,6 +189,7 @@ extern "C" fn run_task() {
     // Restore previous deadline
     *min_deadline = prev_deadline;
 
+    #[cfg(feature = "defmt")]
     defmt::debug!(
         "[COMPLETE TASK] new dl: {}, stack depth: {}",
         prev_deadline,
@@ -198,6 +204,7 @@ extern "C" fn run_task() {
         && (task.abs_deadline() < *min_deadline || stack.is_empty())
     {
         let task = unsafe { queue.pop_unchecked() };
+        #[cfg(feature = "defmt")]
         defmt::debug!("[RESCHEDULE TASK]");
         Scheduler::execute(cs, task, now());
     }

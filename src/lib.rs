@@ -1,5 +1,7 @@
 #![no_std]
 
+pub use fugit;
+
 pub mod dispatchers;
 pub mod scheduler;
 pub mod task;
@@ -11,6 +13,7 @@ type Timestamp = u32;
 pub type Deadline = u32;
 
 /// Print the vector table
+#[cfg(feature = "defmt")]
 pub fn print_vtable() {
     for (addr, item) in unsafe { vector_table::VECTOR_TABLE.get() }
         .iter()
