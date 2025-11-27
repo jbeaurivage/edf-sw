@@ -3,21 +3,41 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use cortex_m::interrupt;
 use cortex_m::peripheral::{DWT, NVIC};
+use heapless::BinaryHeap;
 use heapless::binary_heap::Min;
-use heapless::{BinaryHeap, Vec};
 
 use crate::Timestamp;
 use crate::critical_section::CsGuard;
 use crate::dispatchers::{DISPATCHERS, NUM_DISPATCHERS, dispatcher};
 use crate::task::{RunningTask, ScheduledTask, Task};
 
-struct TaskStack(UnsafeCell<Vec<RunningTask, NUM_DISPATCHERS, u8>>);
+/// Depth 1 queue that serves to pass messages from the scheduler to the
+/// dispatchers
+struct TaskMessageQueue<const N: usize>(UnsafeCell<[Option<RunningTask>; N]>);
 
-unsafe impl Sync for TaskStack {}
+unsafe impl<const N: usize> Sync for TaskMessageQueue<N> {}
 
-impl TaskStack {
-    fn get_mut(&self, _cs: &CsGuard) -> *mut Vec<RunningTask, NUM_DISPATCHERS, u8> {
-        self.0.get()
+impl<const N: usize> TaskMessageQueue<N> {
+    fn store(&self, _cs: &CsGuard, task: RunningTask, dispatcher_idx: usize) {
+        unsafe {
+            (&mut *self.0.get())
+                .get_mut(dispatcher_idx)
+                .expect("BUG: dispatcher idx doesn't exist")
+                .replace(task);
+        }
+    }
+
+    fn take(&self, _cs: &CsGuard, dispatcher_idx: usize) -> Option<RunningTask> {
+        unsafe {
+            (&mut *self.0.get())
+                .get_mut(dispatcher_idx)
+                .expect("BUG: dispatcher idx doesn't exist")
+                .take()
+        }
+    }
+
+    fn is_empty(&self, _cs: &CsGuard) -> bool {
+        unsafe { (&*self.0.get()).iter().all(|f| f.is_none()) }
     }
 }
 
@@ -42,7 +62,8 @@ impl TaskQueue {
     }
 }
 
-static RUNNING_STACK: TaskStack = TaskStack(UnsafeCell::new(Vec::new()));
+static RUNNING_QUEUE: TaskMessageQueue<NUM_DISPATCHERS> =
+    TaskMessageQueue(UnsafeCell::new([const { None }; NUM_DISPATCHERS]));
 static MIN_DEADLINE: MinDeadline = MinDeadline(UnsafeCell::new(u32::MAX));
 static PARKED_QUEUE: TaskQueue = TaskQueue(UnsafeCell::new(BinaryHeap::new()));
 
@@ -98,8 +119,7 @@ impl Scheduler {
         #[cfg(feature = "defmt")]
         let rel_dl = task.rel_deadline();
         let task = task.into_queued(now);
-        let (stack, min_dl) =
-            unsafe { (&mut *RUNNING_STACK.get_mut(&cs), *MIN_DEADLINE.get_mut(&cs)) };
+        let min_dl = unsafe { *MIN_DEADLINE.get_mut(&cs) };
 
         #[cfg(feature = "defmt")]
         defmt::debug!(
@@ -110,7 +130,7 @@ impl Scheduler {
             min_dl
         );
 
-        if task.abs_deadline() < min_dl || stack.is_empty() {
+        if task.abs_deadline() < min_dl || RUNNING_QUEUE.is_empty(&cs) {
             #[cfg(feature = "defmt")]
             defmt::debug!("[PREEMPT]");
             Self::execute(cs, task, now);
@@ -120,7 +140,7 @@ impl Scheduler {
                 #[cfg(feature = "defmt")]
                 defmt::debug!("[ENQUEUE] queue length: {}", queue.len());
 
-                queue.push(task).unwrap();
+                queue.push(task).expect("Task queue is full");
             }
         }
     }
@@ -130,23 +150,27 @@ impl Scheduler {
         let prev_dl = *min_dl;
         *min_dl = task.abs_deadline();
 
-        let stack = unsafe { &mut *RUNNING_STACK.get_mut(&cs) };
+        let dispatcher_prio = task.dispatcher_prio();
 
-        stack
-            .push(RunningTask::from_scheduled(task, prev_dl))
-            .unwrap();
-        let max_prio = stack.len() as u8;
+        RUNNING_QUEUE.store(
+            &cs,
+            RunningTask::from_scheduled(task, prev_dl),
+            dispatcher_prio as usize,
+        );
+        // let max_prio = stack.len() as u8;
 
         #[cfg(feature = "defmt")]
         defmt::debug!(
-            "[EXEC] prio: {}, now: {}, new dl: {}, prev dl: {}",
-            max_prio,
+            // "[EXEC] max prio: {}, dispatcher prio: {}, now: {}, new dl: {}, prev dl: {}",
+            "[EXEC] dispatcher prio: {}, now: {}, new dl: {}, prev dl: {}",
+            // max_prio,
+            dispatcher_prio,
             now,
             &*min_dl,
             prev_dl
         );
 
-        NVIC::pend(dispatcher(max_prio));
+        NVIC::pend(dispatcher(dispatcher_prio));
     }
 
     pub fn idle(&self) -> ! {
@@ -160,10 +184,14 @@ impl Scheduler {
 /// Trampoline that takes care of launching the task, and restoring the
 /// scheduler state after its execution completes.
 #[inline(always)]
-pub(super) extern "C" fn run_task() {
-    let (callback, prev_deadline) = unsafe {
+pub(super) fn run_task<const P: usize>() {
+    let (callback, prev_deadline) = {
         let cs = CsGuard::new();
-        let task = (&*RUNNING_STACK.get_mut(&cs)).last().unwrap();
+
+        let task = RUNNING_QUEUE
+            .take(&cs, P)
+            .expect("BUG: a task is supposed to be enqueued here");
+
         (task.callback(), task.prev_deadline())
     };
 
@@ -172,22 +200,21 @@ pub(super) extern "C" fn run_task() {
 
     // And cleanup after ourselves
     let cs = CsGuard::new();
-    let (stack, min_deadline) = unsafe {
-        (
-            &mut *RUNNING_STACK.get_mut(&cs),
-            &mut *MIN_DEADLINE.get_mut(&cs),
-        )
-    };
+    let min_deadline = unsafe { &mut *MIN_DEADLINE.get_mut(&cs) };
 
-    stack.pop().unwrap();
+    // TODO: should the task be dequeued here instead?
+    // stack
+    //     .pop()
+    //     .expect("BUG: dispatcher stack should contain at least one task");
     // Restore previous deadline
     *min_deadline = prev_deadline;
 
     #[cfg(feature = "defmt")]
     defmt::debug!(
-        "[COMPLETE TASK] new dl: {}, stack depth: {}",
+        // "[COMPLETE TASK] new dl: {}, stack depth: {}",
+        "[COMPLETE TASK] new dl: {}",
         prev_deadline,
-        stack.len(),
+        // stack.len(),
     );
 
     // It's possible that a task showed up in the queue as the previous task was
@@ -195,7 +222,7 @@ pub(super) extern "C" fn run_task() {
     // run, which would start as soon as the critical section exits.
     let queue = unsafe { &mut *PARKED_QUEUE.get_mut(&cs) };
     if let Some(task) = queue.peek()
-        && (task.abs_deadline() < *min_deadline || stack.is_empty())
+        && (task.abs_deadline() < *min_deadline || RUNNING_QUEUE.is_empty(&cs))
     {
         let task = unsafe { queue.pop_unchecked() };
         #[cfg(feature = "defmt")]

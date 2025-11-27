@@ -1,15 +1,15 @@
-[package]
-name = "edf-sw"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+resolver = "3"
+members = [
+    "edf-scheduler",
+    "edf-atsamd"
+]
 
-[dependencies]
-cortex-m = "0.7.7"
-fugit = "0.3.7"
-heapless = { version = "0.9.1", features = ["portable-atomic"] }
+[profile.dev]
+opt-level = 0
+debug = 2
 
-defmt = { version = "1.0.1", optional = true }
-
-
-[features]
-defmt = ["dep:defmt", "fugit/defmt", "heapless/defmt"]
+[profile.release]
+opt-level = "s"
+debug = 2
+lto = "fat"

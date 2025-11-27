@@ -8,14 +8,6 @@ pub(crate) const DISPATCHERS: [Interrupt; NUM_DISPATCHERS] = [
     Interrupt::SERCOM0_2,
 ];
 
-const fn interrupt_to_irq(interrupt: Interrupt) -> usize {
-    interrupt as usize + 16
-}
-
-pub const fn dispatcher_irq(level: u8) -> usize {
-    interrupt_to_irq(DISPATCHERS[level as usize])
-}
-
 pub const fn dispatcher(level: u8) -> Interrupt {
     DISPATCHERS[level as usize]
 }
@@ -24,19 +16,19 @@ pub const fn dispatcher(level: u8) -> Interrupt {
 #[interrupt]
 #[allow(non_snake_case)]
 fn SERCOM0_0() {
-    crate::scheduler::run_task();
+    crate::scheduler::run_task::<0>();
 }
 
 /// Level 2 dispatcher placeholder
 #[interrupt]
 #[allow(non_snake_case)]
 fn SERCOM0_1() {
-    crate::scheduler::run_task();
+    crate::scheduler::run_task::<1>();
 }
 
 /// Level 3 dispatcher placeholder
 #[interrupt]
 #[allow(non_snake_case)]
 fn SERCOM0_2() {
-    crate::scheduler::run_task();
+    crate::scheduler::run_task::<2>();
 }
