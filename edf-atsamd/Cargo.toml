@@ -1,0 +1,25 @@
+[package]
+name = "edf-atsamd"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cortex-m = { version = "0.7.7", features = ["critical-section-single-core", "inline-asm"] }
+cortex-m-rt = "0.7.5"
+defmt = "1.0.1"
+defmt-rtt = "1.1.0"
+edf-sw-scheduler = { path = "../edf-scheduler", features = ["defmt"]}
+panic-probe = { version = "1.0.0", features = ["defmt", "print-defmt"] }
+
+[dependencies.atsamd-hal]
+default-features = false
+version = "0.23.0"
+
+[features]
+# ask the HAL to enable atsamd51j support
+default = [
+    "atsamd-hal/samd51j-rt",
+    "atsamd-hal/samd51j",
+    "atsamd-hal/rtic",
+    "atsamd-hal/defmt",
+]

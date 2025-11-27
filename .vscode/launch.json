@@ -1,0 +1,47 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug (dev)",
+      "type": "cortex-debug",
+      "request": "launch",
+      "servertype": "openocd",
+      "cwd": "${workspaceFolder}",
+      "executable": "target/thumbv7em-none-eabihf/debug/edf-atsamd",
+      "device": "ATSAMD51J19A",
+      "configFiles": [
+        "edf-atsamd/scripts/openocd.cfg"
+      ],
+      "searchDir": [
+        "edf-atsamd/scripts/"
+      ],
+      "runToEntryPoint": "main",
+      "svdFile": "atsamd51j19a.svd", // optional, for peripheral view
+      "preLaunchTask": "build-dev",
+      "postRestartSessionCommands": [
+        "monitor reset halt"
+      ],
+    },
+    {
+      "name": "Debug (release)",
+      "type": "cortex-debug",
+      "request": "launch",
+      "servertype": "openocd",
+      "cwd": "${workspaceFolder}",
+      "executable": "target/thumbv7em-none-eabihf/release/edf-atsamd",
+      "device": "ATSAMD51J19A",
+      "configFiles": [
+        "edf-atsamd/scripts/openocd.cfg"
+      ],
+      "searchDir": [
+        "edf-atsamd/scripts/"
+      ],
+      "runToEntryPoint": "main",
+      "svdFile": "edf-atsamd/atsamd51j19a.svd", // optional, for peripheral view
+      "preLaunchTask": "build-release",
+      "postRestartSessionCommands": [
+        "monitor reset halt"
+      ],
+    },
+  ],
+}

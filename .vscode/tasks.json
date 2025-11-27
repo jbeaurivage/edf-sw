@@ -1,0 +1,16 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "shell",
+			"command": "DEFMT_LOG=trace cargo build",
+			"label": "build-dev"
+		},
+		{
+			"type": "shell",
+			"command": "DEFMT_LOG=off cargo build -r",
+			"label": "build-release"
+		},
+	],
+	
+}
